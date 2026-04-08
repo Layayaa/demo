@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 企业内部历史询价复用系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --primary-dark: #1e40af;
+            --primary-light: #dbeafe;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 400px;
+            padding: 1rem;
+        }
+
+        .login-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            overflow: hidden;
+        }
+
+        .login-header {
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .login-header svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 1rem;
+        }
+
+        .login-header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .login-header p {
+            font-size: 0.875rem;
+            opacity: 0.9;
+            margin: 0.5rem 0 0 0;
+        }
+
+        .login-body {
+            padding: 2rem;
+        }
+
+        .form-label {
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .form-control {
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            border: 1px solid #d1d5db;
+            transition: all 0.2s;
+        }
+
+        .form-control:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px var(--primary-light);
+        }
+
+        .btn-login {
+            width: 100%;
+            padding: 0.875rem;
+            border-radius: 8px;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-login:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+        }
+
+        .btn-login:active {
+            transform: translateY(0);
+        }
+
+        .alert {
+            border-radius: 8px;
+            border: none;
+        }
+
+        .password-hint {
+            font-size: 0.75rem;
+            color: #6b7280;
+            text-align: center;
+            margin-top: 1rem;
+        }
+
+        .input-group-text {
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-right: none;
+            border-radius: 8px 0 0 8px;
+        }
+
+        .input-group .form-control {
+            border-left: none;
+            border-radius: 0 8px 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <h1>企业内部历史询价复用系统</h1>
+                <p>避免重复询价 · 沉淀历史成果 · 提升工作效率</p>
+            </div>
+            <div class="login-body">
+                <div id="errorAlert" class="alert alert-danger d-none" role="alert">
+                    <i class="fas fa-exclamation-circle me-2"></i>
+                    <span id="errorMessage"></span>
+                </div>
+
+                <form id="loginForm">
+                    <div class="mb-3">
+                        <label for="phone" class="form-label">手机号</label>
+                        <div class="input-group">
+                            <span class="input-group-text">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                    <path d="M11 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h6zM5 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H5z"/>
+                                    <path d="M8 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
+                                </svg>
+                            </span>
+                            <input type="tel" class="form-control" id="phone" placeholder="请输入手机号" maxlength="11" required>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="password" class="form-label">密码</label>
+                        <div class="input-group">
+                            <span class="input-group-text">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                    <path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
+                                </svg>
+                            </span>
+                            <input type="password" class="form-control" id="password" placeholder="请输入密码" required>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-login" id="loginBtn">
+                        <span id="loginText">登录</span>
+                        <span id="loginSpinner" class="spinner-border spinner-border-sm d-none" role="status"></span>
+                    </button>
+                </form>
+
+                <p class="password-hint">
+                    初始密码为手机号后六位
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const phone = document.getElementById('phone').value.trim();
+            const password = document.getElementById('password').value;
+            const errorAlert = document.getElementById('errorAlert');
+            const errorMessage = document.getElementById('errorMessage');
+            const loginBtn = document.getElementById('loginBtn');
+            const loginText = document.getElementById('loginText');
+            const loginSpinner = document.getElementById('loginSpinner');
+
+            // 隐藏错误提示
+            errorAlert.classList.add('d-none');
+
+            // 验证手机号格式
+            if (!/^1\d{10}$/.test(phone)) {
+                errorMessage.textContent = '请输入正确的手机号';
+                errorAlert.classList.remove('d-none');
+                return;
+            }
+
+            // 显示加载状态
+            loginBtn.disabled = true;
+            loginText.textContent = '登录中...';
+            loginSpinner.classList.remove('d-none');
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ phone, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    if (data.csrf_token) {
+                        localStorage.setItem('inquiry_csrf_token_v1', data.csrf_token);
+                    }
+                    // 登录成功，跳转到主页
+                    window.location.href = '/';
+                } else {
+                    // 显示错误信息
+                    errorMessage.textContent = data.message || '登录失败';
+                    errorAlert.classList.remove('d-none');
+                }
+            } catch (error) {
+                errorMessage.textContent = '网络错误，请稍后重试';
+                errorAlert.classList.remove('d-none');
+            } finally {
+                // 恢复按钮状态
+                loginBtn.disabled = false;
+                loginText.textContent = '登录';
+                loginSpinner.classList.add('d-none');
+            }
+        });
+
+        // 支持回车键提交
+        document.getElementById('password').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                document.getElementById('loginForm').dispatchEvent(new Event('submit'));
+            }
+        });
+    </script>
+</body>
+</html>

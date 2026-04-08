@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python app.py)",
+      "Bash(python -c \"from app import app, db; app.app_context\\(\\).push\\(\\); db.create_all\\(\\); print\\('数据库初始化完成'\\)\")",
+      "Bash(curl -s http://localhost:5000/)",
+      "Bash(curl -s http://localhost:5000/api/preview/5)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('success:', d.get\\('success'\\)\\); print\\('message:', d.get\\('message', 'N/A'\\)\\)\")",
+      "Bash(curl -s http://localhost:5000/api/files)",
+      "Bash(python -c ':*)",
+      "Bash(pip install:*)",
+      "Bash(curl -s http://localhost:5000/api/statistics)",
+      "Bash(curl -s -X POST \"http://localhost:5000/api/natural_query\" -H \"Content-Type: application/json\" --data-raw '{\"query\":\"德阳商品混凝土C30\"}')",
+      "Bash(curl -v \"http://localhost:5000/api/query?material_name=%E9%97%A8\")",
+      "Bash(curl -s -X POST http://localhost:5000/api/natural_query -H \"Content-Type: application/json\" -d '{\"query\": \"test\"}')",
+      "Bash(ls -t /c/Users/LAYA/AppData/Local/Temp/claude/d--demo/917a6bed-4a6d-498c-a8f0-d761636c55de/tasks/*.output)",
+      "Bash(xargs cat:*)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(rm -rf d:/demo/backend/__pycache__/)",
+      "Bash(curl -s -X POST http://localhost:5000/api/natural_query -H \"Content-Type: application/json\" -d @/tmp/test.json)",
+      "Bash(find d:/demo -type d -name \"__pycache__\" -exec rm -rf {} +)"
+    ]
+  }
+}
