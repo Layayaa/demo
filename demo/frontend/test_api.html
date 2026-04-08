@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head><title>API测试</title></head>
+<body>
+<h2>API返回数据测试</h2>
+<button onclick="testAPI()">测试查询API</button>
+<pre id="result"></pre>
+<script>
+async function testAPI() {
+    // 先登录
+    await fetch('/api/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({phone:'13800138000', password:'138000'})
+    });
+    
+    // 查询
+    const resp = await fetch('/api/query');
+    const data = await resp.json();
+    
+    if(data.success && data.data.length > 0) {
+        const r = data.data[0];
+        document.getElementById('result').textContent = 
+            '第一条记录:\n' +
+            'material_name: ' + r.material_name + '\n' +
+            'supplier: ' + r.supplier + '\n' +
+            'source_file_name: ' + r.source_file_name + '\n' +
+            'source_upload_time: ' + r.source_upload_time + '\n\n' +
+            '所有字段:\n' + JSON.stringify(r, null, 2);
+    } else {
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+    }
+}
+</script>
+</body>
+</html>

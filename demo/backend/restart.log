@@ -1,0 +1,21 @@
+[SECURITY] 未设置 SECRET_KEY，已使用进程内随机密钥。生产环境请通过环境变量设置固定值。
+数据库初始化完成
+  - 文件数据库: D:\demo\database\inquiry_file.db
+  - 明细数据库: D:\demo\database\price_record.db
+  - 审计数据库: D:\demo\database\upload_audit.db
+  - 用户数据库: D:\demo\database\user.db
+[NLP] 开始初始化自然语言解析器...
+[NLP] NLPParser 创建成功
+[NLP] 已加载 565 个材料名称
+[NLP] 自然语言解析器初始化完成
+============================================================
+企业内部历史询价复用系统
+访问地址: http://localhost:5000
+============================================================
+ * Serving Flask app 'app'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.20.10.3:5000
+Press CTRL+C to quit
