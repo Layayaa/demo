@@ -12,8 +12,10 @@ backend/restart_pid.txt
 
 # Sensitive local files
 backend/cookies.txt
+cookies.txt
 .env
 .env.*
+.env.production
 
 # IDE
 .vscode/
