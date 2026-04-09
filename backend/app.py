@@ -18,6 +18,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 import pandas as pd
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from models import db, InquiryFile, PriceRecord, UploadAudit, QueryLog, User
 from template_config import (
@@ -29,6 +30,7 @@ from nlp_parser import NLPParser, parse_query
 
 # 创建Flask应用
 app = Flask(__name__, static_folder='../frontend/static', template_folder='../frontend')
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # 配置 - 四库分离
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -82,7 +84,7 @@ CSRF_EXEMPT_PATHS = {'/api/login'}
 
 RATE_LIMIT_DEFAULT = (120, 60)
 RATE_LIMIT_RULES = {
-    '/api/login': (5, 300),
+    '/api/login': (10, 60),
     '/api/upload': (20, 300),
     '/api/natural_query': (60, 60),
     '/api/query': (90, 60)
@@ -92,12 +94,16 @@ _rate_limit_lock = threading.Lock()
 ALLOWED_USER_ROLES = {'admin', 'user'}
 _schema_checked = False
 
-# 启用CORS（排除登录相关路由）
+# 启用CORS
 cors_origins_env = os.environ.get('CORS_ORIGINS', '').strip()
 if cors_origins_env:
     cors_origins = [origin.strip() for origin in cors_origins_env.split(',') if origin.strip()]
 else:
-    cors_origins = ['http://localhost:5000', 'http://127.0.0.1:5000']
+    cors_origins = [
+        'http://localhost:5000', 'http://127.0.0.1:5000',
+        'http://localhost:5001', 'http://127.0.0.1:5001',
+        'http://localhost',
+    ]
 CORS(app, supports_credentials=True, origins=cors_origins)
 
 # 初始化数据库
@@ -2067,22 +2073,25 @@ def create_initial_admin():
         db.session.rollback()
 
 
-if __name__ == '__main__':
-    # 确保数据库目录存在
+def startup_init():
+    """应用启动初始化（python app.py 和 gunicorn 均会执行）"""
     db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'database')
     if not os.path.exists(db_path):
         os.makedirs(db_path)
 
-    # 初始化数据库
     init_db()
 
-    # 初始化NLP解析器（在应用上下文中）
     with app.app_context():
         init_nlp_parser()
 
-    # 启动应用
+
+startup_init()
+
+
+if __name__ == '__main__':
     print("=" * 60)
     print("企业内部历史询价复用系统")
-    print("访问地址: http://localhost:5000")
+    port = int(os.environ.get('PORT', 5001))
+    print(f"访问地址: http://localhost:{port}")
     print("=" * 60)
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=port)

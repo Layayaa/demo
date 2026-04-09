@@ -166,7 +166,7 @@ class User(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     phone = db.Column(db.String(11), unique=True, nullable=False, comment='手机号')
-    password_hash = db.Column(db.String(128), nullable=False, comment='密码哈希')
+    password_hash = db.Column(db.String(256), nullable=False, comment='密码哈希')
     real_name = db.Column(db.String(100), comment='真实姓名')
     department = db.Column(db.String(100), comment='部门')
     role = db.Column(db.String(20), default='user', comment='角色: admin/user')
@@ -175,8 +175,8 @@ class User(db.Model):
     last_login = db.Column(db.DateTime, comment='最后登录时间')
 
     def set_password(self, password):
-        """设置密码（加密存储）"""
-        self.password_hash = generate_password_hash(password)
+        """设置密码（加密存储），使用 pbkdf2 确保跨 Python 版本兼容"""
+        self.password_hash = generate_password_hash(password, method='pbkdf2:sha256')
 
     def check_password(self, password):
         """验证密码"""

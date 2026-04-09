@@ -13,7 +13,7 @@ USE inquiry_system;
 CREATE TABLE IF NOT EXISTS user (
     id INT AUTO_INCREMENT PRIMARY KEY,
     phone VARCHAR(11) UNIQUE NOT NULL COMMENT '手机号',
-    password_hash VARCHAR(128) NOT NULL COMMENT '密码哈希',
+    password_hash VARCHAR(256) NOT NULL COMMENT '密码哈希',
     real_name VARCHAR(100) COMMENT '真实姓名',
     department VARCHAR(100) COMMENT '部门',
     role VARCHAR(20) DEFAULT 'user' COMMENT '角色: admin/user',
