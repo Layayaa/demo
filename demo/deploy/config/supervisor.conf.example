@@ -1,0 +1,43 @@
+; Supervisor 配置文件
+; 文件位置: /etc/supervisor/conf.d/inquiry-system.conf
+
+[program:inquiry-system]
+; 应用目录
+directory=/opt/inquiry-system/app/backend
+
+; 启动命令
+command=/opt/inquiry-system/venv/bin/gunicorn -c /opt/inquiry-system/config/gunicorn.conf.py app:app
+
+; 运行用户
+user=www-data
+
+; 自动启动
+autostart=true
+
+; 自动重启
+autorestart=true
+
+; 启动等待时间
+startsecs=10
+
+; 停止等待时间
+stopwaitsecs=600
+
+; 重试次数
+startretries=3
+
+; 标准输出日志
+stdout_logfile=/opt/inquiry-system/logs/app.out.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=10
+
+; 标准错误日志
+stderr_logfile=/opt/inquiry-system/logs/app.err.log
+stderr_logfile_maxbytes=50MB
+stderr_logfile_backups=10
+
+; 环境变量
+environment=PATH="/opt/inquiry-system/venv/bin",SECRET_KEY="%(ENV_SECRET_KEY)s",DATABASE_URL="%(ENV_DATABASE_URL)s"
+
+; 进程优先级
+priority=999
