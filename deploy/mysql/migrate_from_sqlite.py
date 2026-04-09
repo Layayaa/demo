@@ -178,8 +178,12 @@ def main():
     total += migrate_table(
         os.path.join(sqlite_db_dir, SQLITE_DBS['inquiry_file']),
         'inquiry_file',
-        ['file_id', 'file_name', 'upload_time', 'upload_user', 'department', 'engineer_name', 'batch_no', 'parse_status', 'record_count', 'validity_months'],
+        ['file_id', 'file_name', 'stored_file_name', 'upload_time', 'upload_user', 'department', 'engineer_name', 'batch_no', 'parse_status', 'record_count', 'validity_months'],
         mysql_conn,
+        column_aliases={
+            # 旧库没有该字段时会回落失败，因此这里映射到 file_name 作为兼容值
+            'stored_file_name': ['file_name'],
+        },
         transform=normalize_inquiry_file,
     )
 
@@ -221,4 +225,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

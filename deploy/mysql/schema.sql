@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS user (
 CREATE TABLE IF NOT EXISTS inquiry_file (
     file_id INT AUTO_INCREMENT PRIMARY KEY,
     file_name VARCHAR(255) NOT NULL COMMENT '原始文件名',
+    stored_file_name VARCHAR(255) COMMENT '磁盘存储文件名',
     upload_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
     upload_user VARCHAR(100) COMMENT '上传人',
     department VARCHAR(100) COMMENT '填报部门',
@@ -111,17 +112,6 @@ CREATE TABLE IF NOT EXISTS price_record (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='询价记录表';
 
 -- ============================================
--- 默认管理员
--- 密码: 138000（手机号后六位）
+-- 默认管理员由应用启动逻辑自动创建：
+-- backend/app.py -> create_initial_admin()
 -- ============================================
-INSERT INTO user (phone, password_hash, real_name, department, role, is_active)
-VALUES (
-    '13800138000',
-    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.qG.5GZvFQKKvAe',
-    '系统管理员',
-    '系统管理部',
-    'admin',
-    TRUE
-)
-ON DUPLICATE KEY UPDATE phone = phone;
-

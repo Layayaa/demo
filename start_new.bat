@@ -16,10 +16,10 @@ echo [√] Python环境正常
 
 echo.
 echo [2/3] 检查依赖...
-python -c "import flask; import pandas; import openpyxl" >nul 2>&1
+python -c "import flask; import flask_login; import pandas; import openpyxl; import jieba" >nul 2>&1
 if errorlevel 1 (
     echo [!] 依赖未安装，正在安装...
-    pip install -r requirements.txt -q
+    pip install -r backend\requirements.txt -q
 )
 echo [√] 依赖检查完成
 

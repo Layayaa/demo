@@ -19,6 +19,7 @@ class InquiryFile(db.Model):
 
     file_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     file_name = db.Column(db.String(255), nullable=False, comment='原始文件名')
+    stored_file_name = db.Column(db.String(255), comment='磁盘存储文件名')
     upload_time = db.Column(db.DateTime, default=datetime.now, comment='上传时间')
     upload_user = db.Column(db.String(100), comment='上传人')
     department = db.Column(db.String(100), comment='填报部门')
@@ -32,6 +33,7 @@ class InquiryFile(db.Model):
         return {
             'file_id': self.file_id,
             'file_name': self.file_name,
+            'stored_file_name': self.stored_file_name,
             'upload_time': self.upload_time.strftime('%Y-%m-%d %H:%M:%S') if self.upload_time else None,
             'upload_user': self.upload_user,
             'department': self.department,

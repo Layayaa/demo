@@ -1009,10 +1009,11 @@
             const alertClass = type === 'success' ? 'alert-success' :
                              type === 'danger' ? 'alert-danger' :
                              type === 'info' ? 'alert-info' : 'alert-warning';
+            const safeMessage = escapeHtml(message);
 
             return `
                 <div class="alert ${alertClass} alert-custom alert-dismissible fade show" role="alert">
-                    ${message}
+                    ${safeMessage}
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
             `;
@@ -1028,6 +1029,8 @@
             };
             return String(text ?? '').replace(/[&<>"']/g, (m) => map[m]);
         }
+
+        const h = escapeHtml;
 
         const CSRF_STORAGE_KEY = 'inquiry_csrf_token_v1';
         const nativeFetch = window.fetch.bind(window);
@@ -1154,15 +1157,15 @@
                                 <h6><i class="fas fa-cogs me-2"></i>智能识别报告</h6>
                                 <div class="row">
                                     <div class="col-md-4">
-                                        <strong>成功解析：</strong>${result.record_count} 条记录<br>
-                                        <strong>跳过行数：</strong>${result.skipped_rows || 0} 行
+                                        <strong>成功解析：</strong>${h(result.record_count)} 条记录<br>
+                                        <strong>跳过行数：</strong>${h(result.skipped_rows || 0)} 行
                                     </div>
                                     <div class="col-md-4">
-                                        ${result.duplicate_skipped > 0 ? `<strong style="color: #e74c3c;">重复跳过：</strong>${result.duplicate_skipped} 条<br><small class="text-muted">（材料+规格+供应商+日期相同）</small>` : '<strong>重复跳过：</strong>0 条'}
+                                        ${result.duplicate_skipped > 0 ? `<strong style="color: #e74c3c;">重复跳过：</strong>${h(result.duplicate_skipped)} 条<br><small class="text-muted">（材料+规格+供应商+日期相同）</small>` : '<strong>重复跳过：</strong>0 条'}
                                     </div>
                                     <div class="col-md-4">
                                         <strong>列名映射：</strong><br>
-                                        <small>${Object.entries(result.column_mapping).map(([k, v]) => `${k}→${v}`).join('、')}</small>
+                                        <small>${Object.entries(result.column_mapping).map(([k, v]) => `${h(k)}→${h(v)}`).join('、')}</small>
                                     </div>
                                 </div>
                             </div>
@@ -1174,7 +1177,7 @@
                         resultHtml += `
                             <div class="alert alert-warning mt-2">
                                 <h6><i class="fas fa-exclamation-triangle me-2"></i>解析提示</h6>
-                                <small>${result.quality_issues.join('<br>')}</small>
+                                <small>${result.quality_issues.map(item => h(item)).join('<br>')}</small>
                             </div>
                         `;
                     }
@@ -1185,7 +1188,7 @@
                             <div class="duplicate-alert" style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border-left: 4px solid #f39c12; padding: 1rem; border-radius: 8px; margin-top: 1rem;">
                                 <h5 style="color: #856404; margin-bottom: 1rem;">
                                     <i class="fas fa-bell me-2"></i>
-                                    发现 ${result.duplicate_check.total_count} 条近1年内的相似询价记录
+                                    发现 ${h(result.duplicate_check.total_count)} 条近1年内的相似询价记录
                                 </h5>
                                 <p style="color: #666; margin-bottom: 1rem;">
                                     <strong>建议：</strong>以下材料已有询价记录，可直接联系对应工程师获取详情，无需重复询价。
@@ -1205,15 +1208,15 @@
                                         <tbody>
                                             ${result.duplicate_check.duplicates.map(d => `
                                                 <tr>
-                                                    <td><strong>${d.existing_material}</strong></td>
-                                                    <td>${d.existing_specification || '-'}</td>
-                                                    <td style="color: #e74c3c; font-weight: bold;">${d.existing_price ? d.existing_price + '元' : '-'}</td>
-                                                    <td>${d.existing_quote_date || '-'}</td>
+                                                    <td><strong>${h(d.existing_material || '-')}</strong></td>
+                                                    <td>${h(d.existing_specification || '-')}</td>
+                                                    <td style="color: #e74c3c; font-weight: bold;">${h(d.existing_price ? d.existing_price + '元' : '-')}</td>
+                                                    <td>${h(d.existing_quote_date || '-')}</td>
                                                     <td>
-                                                        <span style="color: #2980b9; font-weight: 500;">${d.existing_engineer || '-'}</span>
-                                                        ${d.existing_department ? '<br><small style="color:#999;">(' + d.existing_department + ')</small>' : ''}
+                                                        <span style="color: #2980b9; font-weight: 500;">${h(d.existing_engineer || '-')}</span>
+                                                        ${d.existing_department ? '<br><small style="color:#999;">(' + h(d.existing_department) + ')</small>' : ''}
                                                     </td>
-                                                    <td><small>${d.existing_file || '-'}</small></td>
+                                                    <td><small>${h(d.existing_file || '-')}</small></td>
                                                 </tr>
                                             `).join('')}
                                         </tbody>
@@ -1244,8 +1247,8 @@
                                         <tbody>
                                             ${result.query_history.map(q => `
                                                 <tr>
-                                                    <td>${q.material_name}</td>
-                                                    <td>${q.query_time}</td>
+                                                    <td>${h(q.material_name)}</td>
+                                                    <td>${h(q.query_time)}</td>
                                                     <td><span class="badge badge-success">已完成</span></td>
                                                 </tr>
                                             `).join('')}
@@ -1342,7 +1345,7 @@
                 }
                 chatMessages = parsed;
                 chatHistoryEl.innerHTML = '';
-                chatMessages.forEach((item) => appendChatBubble(item.role, item.content, item.isHtml, false));
+                chatMessages.forEach((item) => appendChatBubble(item.role, item.content, false, false));
             } catch (error) {
                 resetChat();
             }
@@ -1369,7 +1372,7 @@
             `).join('');
 
             return `
-                <div class="mb-2 text-muted">命中 <strong>${result.total || rows.length}</strong> 条，以下展示前 ${rows.length} 条：</div>
+                <div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 条，以下展示前 ${h(rows.length)} 条：</div>
                 <div class="table-responsive">
                     <table class="table table-sm mb-0">
                         <thead>
@@ -1463,8 +1466,8 @@
                     } else {
                         filterResultEl.innerHTML = `
                             <div class="d-flex justify-content-between align-items-center mb-3">
-                                <span class="text-muted">共找到 <strong>${result.total}</strong> 条记录</span>
-                                <span class="text-muted">第 ${result.page} / ${result.pages} 页</span>
+                                <span class="text-muted">共找到 <strong>${h(result.total)}</strong> 条记录</span>
+                                <span class="text-muted">第 ${h(result.page)} / ${h(result.pages)} 页</span>
                             </div>
                             <div class="table-responsive" style="max-height: 500px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
                                 <table class="table table-hover table-striped mb-0">
@@ -1500,17 +1503,17 @@
 
                                             return `
                                                 <tr class="${row_class}">
-                                                    <td><strong>${r.material_name}</strong></td>
-                                                    <td>${r.specification || '-'}</td>
-                                                    <td>${r.price ? r.price + '元' : '-'}</td>
-                                                    <td>${r.region || '-'}</td>
-                                                    <td>${r.quote_date || '-'}</td>
+                                                    <td><strong>${h(r.material_name)}</strong></td>
+                                                    <td>${h(r.specification || '-')}</td>
+                                                    <td>${h(r.price ? r.price + '元' : '-')}</td>
+                                                    <td>${h(r.region || '-')}</td>
+                                                    <td>${h(r.quote_date || '-')}</td>
                                                     <td>${validity_badge}</td>
-                                                    <td>${r.supplier || '-'}</td>
-                                                    <td><small>${r.source_file_name || '-'}</small></td>
-                                                    <td><small>${r.source_upload_time || '-'}</small></td>
+                                                    <td>${h(r.supplier || '-')}</td>
+                                                    <td><small>${h(r.source_file_name || '-')}</small></td>
+                                                    <td><small>${h(r.source_upload_time || '-')}</small></td>
                                                     <td>
-                                                        <button class="btn btn-sm btn-outline-primary" onclick="showDetail(${r.record_id})">
+                                                        <button class="btn btn-sm btn-outline-primary" onclick="showDetail(${Number(r.record_id)})">
                                                             <i class="fas fa-eye me-1"></i>详情
                                                         </button>
                                                     </td>
@@ -1556,31 +1559,31 @@
                                 <table class="detail-table">
                                     <tr>
                                         <th>材料名称</th>
-                                        <td><strong>${r.material_name}</strong></td>
+                                        <td><strong>${h(r.material_name)}</strong></td>
                                     </tr>
                                     <tr>
                                         <th>规格型号</th>
-                                        <td>${r.specification || '-'}</td>
+                                        <td>${h(r.specification || '-')}</td>
                                     </tr>
                                     <tr>
                                         <th>单位</th>
-                                        <td>${r.unit || '-'}</td>
+                                        <td>${h(r.unit || '-')}</td>
                                     </tr>
                                     <tr>
                                         <th>单价</th>
-                                        <td><strong class="text-primary">${r.price ? r.price + '元' : '-'}</strong></td>
+                                        <td><strong class="text-primary">${h(r.price ? r.price + '元' : '-')}</strong></td>
                                     </tr>
                                     <tr>
                                         <th>是否含税</th>
-                                        <td>${r.is_tax_included || '-'}</td>
+                                        <td>${h(r.is_tax_included || '-')}</td>
                                     </tr>
                                     <tr>
                                         <th>地区</th>
-                                        <td>${r.region || '-'}</td>
+                                        <td>${h(r.region || '-')}</td>
                                     </tr>
                                     <tr>
                                         <th>报价时间</th>
-                                        <td>${r.quote_date || '-'}</td>
+                                        <td>${h(r.quote_date || '-')}</td>
                                     </tr>
                                 </table>
                             </div>
@@ -1589,19 +1592,19 @@
                                 <table class="detail-table">
                                     <tr>
                                         <th>项目名称</th>
-                                        <td>${r.project_name || '-'}</td>
+                                        <td>${h(r.project_name || '-')}</td>
                                     </tr>
                                     <tr>
                                         <th>供应商</th>
-                                        <td>${r.supplier || '-'}</td>
+                                        <td>${h(r.supplier || '-')}</td>
                                     </tr>
                                     <tr>
                                         <th>询价类别</th>
-                                        <td>${r.inquiry_type || '-'}</td>
+                                        <td>${h(r.inquiry_type || '-')}</td>
                                     </tr>
                                     <tr>
                                         <th>备注</th>
-                                        <td>${r.remark || '-'}</td>
+                                        <td>${h(r.remark || '-')}</td>
                                     </tr>
                                 </table>
                             </div>
@@ -1612,19 +1615,19 @@
                             <table class="detail-table">
                                 <tr>
                                     <th>原始文件</th>
-                                    <td><strong>${r.source_file_name || '-'}</strong></td>
+                                    <td><strong>${h(r.source_file_name || '-')}</strong></td>
                                 </tr>
                                 <tr>
                                     <th>上传时间</th>
-                                    <td>${r.source_upload_time || '-'}</td>
+                                    <td>${h(r.source_upload_time || '-')}</td>
                                 </tr>
                                 <tr>
                                     <th>填报部门</th>
-                                    <td>${r.department || '-'}</td>
+                                    <td>${h(r.department || '-')}</td>
                                 </tr>
                                 <tr>
                                     <th>填报工程师</th>
-                                    <td>${r.engineer_name || '-'}</td>
+                                    <td>${h(r.engineer_name || '-')}</td>
                                 </tr>
                             </table>
                         </div>
@@ -1667,11 +1670,11 @@
                                     <tbody>
                                         ${result.data.high_value_materials.map(m => `
                                             <tr>
-                                                <td><strong>${m.material_name}</strong></td>
-                                                <td><span class="badge badge-custom badge-primary">${m.record_count}</span></td>
-                                                <td><span class="badge badge-custom badge-success">${m.total_references}</span></td>
-                                                <td>${m.reference_per_record.toFixed(1)}</td>
-                                                <td><small>${m.latest_quote || '-'}</small></td>
+                                                <td><strong>${h(m.material_name)}</strong></td>
+                                                <td><span class="badge badge-custom badge-primary">${h(m.record_count)}</span></td>
+                                                <td><span class="badge badge-custom badge-success">${h(m.total_references)}</span></td>
+                                                <td>${h(Number(m.reference_per_record || 0).toFixed(1))}</td>
+                                                <td><small>${h(m.latest_quote || '-')}</small></td>
                                             </tr>
                                         `).join('')}
                                     </tbody>
@@ -1700,9 +1703,9 @@
                                 <tbody>
                                     ${result.data.by_department.map(d => `
                                         <tr>
-                                            <td>${d.department}</td>
-                                            <td><span class="badge badge-custom badge-primary">${d.upload_count}</span></td>
-                                            <td><small>${d.last_upload_time || '-'}</small></td>
+                                            <td>${h(d.department)}</td>
+                                            <td><span class="badge badge-custom badge-primary">${h(d.upload_count)}</span></td>
+                                            <td><small>${h(d.last_upload_time || '-')}</small></td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
@@ -1725,10 +1728,10 @@
                                 <tbody>
                                     ${result.data.by_engineer.map(e => `
                                         <tr>
-                                            <td>${e.engineer_name}</td>
-                                            <td><small>${e.department}</small></td>
-                                            <td><span class="badge badge-custom badge-info">${e.upload_count}</span></td>
-                                            <td><small>${e.last_upload_time || '-'}</small></td>
+                                            <td>${h(e.engineer_name)}</td>
+                                            <td><small>${h(e.department)}</small></td>
+                                            <td><span class="badge badge-custom badge-info">${h(e.upload_count)}</span></td>
+                                            <td><small>${h(e.last_upload_time || '-')}</small></td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
@@ -1765,17 +1768,17 @@
                                 <tbody>
                                     ${result.data.map(f => `
                                         <tr>
-                                            <td><strong>${f.file_name}</strong></td>
-                                            <td>${f.department || '-'}</td>
-                                            <td>${f.engineer_name || '-'}</td>
-                                            <td><span class="badge badge-custom badge-secondary">${f.record_count}</span></td>
-                                            <td><small>${f.upload_time}</small></td>
-                                            <td><span class="badge badge-custom ${f.parse_status === 'success' ? 'badge-success' : 'badge-warning'}">${f.parse_status}</span></td>
+                                            <td><strong>${h(f.file_name)}</strong></td>
+                                            <td>${h(f.department || '-')}</td>
+                                            <td>${h(f.engineer_name || '-')}</td>
+                                            <td><span class="badge badge-custom badge-secondary">${h(f.record_count)}</span></td>
+                                            <td><small>${h(f.upload_time)}</small></td>
+                                            <td><span class="badge badge-custom ${f.parse_status === 'success' ? 'badge-success' : 'badge-warning'}">${h(f.parse_status)}</span></td>
                                             <td>
-                                                <button class="btn btn-sm btn-outline-primary me-1" data-file-id="${f.file_id}" data-file-name="${f.file_name.replace(/"/g, '&quot;')}" onclick="previewFile(this.dataset.fileId, this.dataset.fileName)" title="预览">
+                                                <button class="btn btn-sm btn-outline-primary me-1" data-file-id="${Number(f.file_id)}" data-file-name="${h(f.file_name)}" onclick="previewFile(this.dataset.fileId, this.dataset.fileName)" title="预览">
                                                     <i class="fas fa-eye"></i>
                                                 </button>
-                                                <a href="/api/download/${f.file_id}" class="btn btn-sm btn-outline-success" title="下载" download="${f.file_name.replace(/"/g, '&quot;')}">
+                                                <a href="/api/download/${Number(f.file_id)}" class="btn btn-sm btn-outline-success" title="下载" download="${h(f.file_name)}">
                                                     <i class="fas fa-download"></i>
                                                 </a>
                                             </td>
@@ -1805,25 +1808,25 @@
                                 <div class="modal-content">
                                     <div class="modal-header">
                                         <h5 class="modal-title">
-                                            <i class="fas fa-file-excel me-2"></i>${fileName}
+                                            <i class="fas fa-file-excel me-2"></i>${h(fileName)}
                                         </h5>
                                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                     </div>
                                     <div class="modal-body">
                                         <div class="alert alert-info mb-3">
-                                            <strong>共 ${data.total_rows} 行数据</strong>，显示前 50 行
+                                            <strong>共 ${h(data.total_rows)} 行数据</strong>，显示前 50 行
                                         </div>
                                         <div class="table-responsive" style="max-height: 500px;">
                             <table class="table table-sm table-bordered">
                                 <thead class="table-light">
                                     <tr>
-                                        ${data.columns.map(col => `<th>${col}</th>`).join('')}
+                                        ${data.columns.map(col => `<th>${h(col)}</th>`).join('')}
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${data.rows.map(row => `
                                         <tr>
-                                            ${data.columns.map(col => `<td>${row[col] || '-'}</td>`).join('')}
+                                            ${data.columns.map(col => `<td>${h(row[col] || '-')}</td>`).join('')}
                                         </tr>
                                     `).join('')}
                                 </tbody>
@@ -1831,7 +1834,7 @@
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <a href="/api/download/${fileId}" class="btn btn-primary" download="${fileName}">
+                        <a href="/api/download/${Number(fileId)}" class="btn btn-primary" download="${h(fileName)}">
                             <i class="fas fa-download me-1"></i>下载原文件
                         </a>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
@@ -2009,15 +2012,15 @@
             const tbody = document.getElementById('userTableBody');
             tbody.innerHTML = users.map(user => `
                 <tr>
-                    <td>${user.phone}</td>
-                    <td>${user.real_name || '-'}</td>
-                    <td>${user.department || '-'}</td>
+                    <td>${h(user.phone)}</td>
+                    <td>${h(user.real_name || '-')}</td>
+                    <td>${h(user.department || '-')}</td>
                     <td><span class="badge ${user.role === 'admin' ? 'bg-danger' : 'bg-primary'}">${user.role === 'admin' ? '管理员' : '普通用户'}</span></td>
                     <td><span class="badge ${user.is_active ? 'bg-success' : 'bg-secondary'}">${user.is_active ? '启用' : '禁用'}</span></td>
                     <td>
-                        <button class="btn btn-sm btn-outline-primary me-1" onclick="editUser(${user.id})">编辑</button>
-                        <button class="btn btn-sm btn-outline-warning me-1" onclick="resetPassword(${user.id})">重置密码</button>
-                        ${user.id !== currentUser.id ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${user.id})">删除</button>` : ''}
+                        <button class="btn btn-sm btn-outline-primary me-1" onclick="editUser(${Number(user.id)})">编辑</button>
+                        <button class="btn btn-sm btn-outline-warning me-1" onclick="resetPassword(${Number(user.id)})">重置密码</button>
+                        ${user.id !== currentUser.id ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${Number(user.id)})">删除</button>` : ''}
                     </td>
                 </tr>
             `).join('');

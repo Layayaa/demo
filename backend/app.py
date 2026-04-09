@@ -72,7 +72,7 @@ if not secret_key:
     print("[SECURITY] 未设置 SECRET_KEY，已使用进程内随机密钥。生产环境请通过环境变量设置固定值。", flush=True)
 app.config['SECRET_KEY'] = secret_key
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = False  # 开发环境设为False，生产环境设为True
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
@@ -89,6 +89,8 @@ RATE_LIMIT_RULES = {
 }
 _rate_limit_buckets = defaultdict(deque)
 _rate_limit_lock = threading.Lock()
+ALLOWED_USER_ROLES = {'admin', 'user'}
+_schema_checked = False
 
 # 启用CORS（排除登录相关路由）
 cors_origins_env = os.environ.get('CORS_ORIGINS', '').strip()
@@ -215,6 +217,41 @@ def sanitize_json_value(value):
     return value
 
 
+def api_internal_error(log_prefix, exc):
+    """统一内部错误响应，避免向前端暴露内部异常细节。"""
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
+    print(f"[{log_prefix}] {exc}", flush=True)
+    return jsonify({'success': False, 'message': '服务器内部错误，请稍后重试'}), 500
+
+
+def resolve_uploaded_file_path(inquiry_file):
+    """按 file_id 关联的存储文件名精确定位上传文件。"""
+    upload_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
+    stored_name = (getattr(inquiry_file, 'stored_file_name', None) or '').strip()
+
+    if stored_name:
+        candidate = os.path.abspath(os.path.join(upload_dir, stored_name))
+        upload_root = os.path.abspath(upload_dir)
+        if candidate.startswith(upload_root + os.sep) and os.path.exists(candidate):
+            return candidate
+
+    # 兼容历史数据：stored_file_name 为空时回退旧逻辑
+    safe_original_name = secure_filename(inquiry_file.file_name or '')
+    if os.path.isdir(upload_dir):
+        for filename in os.listdir(upload_dir):
+            if filename.endswith('_' + inquiry_file.file_name) or (safe_original_name and filename.endswith('_' + safe_original_name)):
+                return os.path.join(upload_dir, filename)
+
+    direct = os.path.join(upload_dir, inquiry_file.file_name or '')
+    if os.path.exists(direct):
+        return direct
+
+    return None
+
+
 # 初始化自然语言解析器
 nlp_parser = None
 
@@ -245,6 +282,11 @@ if not os.path.exists(UPLOAD_FOLDER):
 @app.before_request
 def ensure_nlp_parser():
     """确保NLP解析器已初始化"""
+    global _schema_checked
+    if not _schema_checked:
+        ensure_schema_compatibility()
+        _schema_checked = True
+
     global nlp_parser
     if nlp_parser is None:
         print("[NLP] before_request 触发，开始初始化...", flush=True)
@@ -487,6 +529,7 @@ def upload_file():
         # 创建文件记录
         inquiry_file = InquiryFile(
             file_name=original_filename,
+            stored_file_name=filename,
             upload_user=upload_user,
             department=department,
             engineer_name='待提取',
@@ -533,11 +576,13 @@ def upload_file():
                             parse_errors.append(f"默认引擎: {str(e3)}")
 
             if df is None or df.empty:
+                if parse_errors:
+                    print(f"[upload_file_parse] parser attempts failed: {'; '.join(parse_errors)}", flush=True)
                 inquiry_file.parse_status = f'failed: 无法解析文件'
                 db.session.commit()
                 return jsonify({
                     'success': False,
-                    'message': f'文件解析失败，请检查文件格式。错误信息: {"; ".join(parse_errors)}'
+                    'message': '文件解析失败，请检查文件格式或编码后重试'
                 }), 400
 
             # ============ 智能检测数据起始行 ============
@@ -821,7 +866,7 @@ def upload_file():
 
                     except Exception as e:
                         print(f"[智能识别] 第{idx+1}行解析失败: {e}")
-                        quality_issues.append(f"第{idx+1}行: {str(e)}")
+                        quality_issues.append(f"第{idx+1}行: 解析失败，已跳过")
                         continue
                 print(f"[智能识别] 多供应商解析完成，记录数: {record_count}")
             else:
@@ -893,7 +938,7 @@ def upload_file():
 
                     except Exception as e:
                         print(f"[智能识别] 第{idx+1}行解析失败: {e}")
-                        quality_issues.append(f"第{idx+1}行: {str(e)}")
+                        quality_issues.append(f"第{idx+1}行: 解析失败，已跳过")
                         continue
 
             # 批量添加记录
@@ -963,7 +1008,8 @@ def upload_file():
             })
 
         except Exception as e:
-            fail_message = str(e)
+            fail_message = '文件解析异常'
+            print(f"[upload_file_parse] {e}", flush=True)
             inquiry_file.parse_status = f'failed: {fail_message}'
             inquiry_file.record_count = 0
             db.session.add(UploadAudit(
@@ -975,10 +1021,10 @@ def upload_file():
                 note=fail_message
             ))
             db.session.commit()
-            return jsonify({'success': False, 'message': f'文件解析失败: {fail_message}'}), 500
+            return jsonify({'success': False, 'message': '文件解析失败，请检查模板和字段后重试'}), 500
 
     except Exception as e:
-        return jsonify({'success': False, 'message': f'上传失败: {str(e)}'}), 500
+        return api_internal_error('upload_file', e)
 
 
 def is_record_exists(material_name, specification, supplier, quote_date):
@@ -1137,6 +1183,11 @@ def natural_language_query():
                 return jsonify({'success': False, 'message': '无法解析请求数据'}), 400
 
         query_text = data.get('query', '') if data else ''
+        page = max(1, int((data or {}).get('page', 1)))
+        per_page = int((data or {}).get('per_page', 20))
+        per_page = min(max(per_page, 1), 100)
+        max_scan = int((data or {}).get('max_scan', 500))
+        max_scan = min(max(max_scan, 50), 2000)
 
         if not query_text:
             return jsonify({'success': False, 'message': '查询文本不能为空'}), 400
@@ -1228,8 +1279,8 @@ def natural_language_query():
             one_year_ago = datetime.now().date() - timedelta(days=365)
             query = query.filter(PriceRecord.quote_date >= one_year_ago)
 
-        # 先获取所有结果
-        all_records = query.all()
+        # 限制单次扫描上限，避免自然语言查询拉全表
+        all_records = query.limit(max_scan).all()
 
         # 智能排序
         if has_params:
@@ -1289,12 +1340,7 @@ def natural_language_query():
 
         # 构建结果
         results = []
-        updated_reference_count = False
         for record in sorted_records:
-            # 增加引用计数
-            record.reference_count = (record.reference_count or 0) + 1
-            updated_reference_count = True
-
             result = record.to_dict()
             # 添加来源追溯信息 - 跨数据库查询
             source_file = get_source_file_info(record.file_id)
@@ -1304,9 +1350,6 @@ def natural_language_query():
                 result['source_department'] = source_file.department
                 result['source_engineer'] = source_file.engineer_name
             results.append(result)
-
-        if updated_reference_count:
-            db.session.commit()
 
         # 比价分析（如果查询意图是比价）
         comparison_data = None
@@ -1318,16 +1361,18 @@ def natural_language_query():
         if parsed_params['parsed_intent'] == 'trend':
             trend_data = analyze_price_trend(parsed_params, results)
 
-        # 计算分页信息
+        # 分页
         total = len(results)
-        per_page = 20
         pages = (total + per_page - 1) // per_page if total > 0 else 1
+        start = (page - 1) * per_page
+        end = start + per_page
+        page_data = results[start:end] if start < total else []
 
         return jsonify({
             'success': True,
-            'data': results,
+            'data': page_data,
             'total': total,
-            'page': 1,
+            'page': page,
             'per_page': per_page,
             'pages': pages,
             'parsed_params': parsed_params,
@@ -1336,7 +1381,7 @@ def natural_language_query():
         })
 
     except Exception as e:
-        return jsonify({'success': False, 'message': f'查询失败: {str(e)}'}), 500
+        return api_internal_error('natural_language_query', e)
 
 
 def analyze_price_comparison(parsed_params, records):
@@ -1436,8 +1481,9 @@ def query_records():
         time_range = request.args.get('time_range', '')
         start_date = request.args.get('start_date', '')
         end_date = request.args.get('end_date', '')
-        page = int(request.args.get('page', 1))
+        page = max(1, int(request.args.get('page', 1)))
         per_page = int(request.args.get('per_page', 20))
+        per_page = min(max(per_page, 1), 100)
 
         # 构建查询
         query = PriceRecord.query
@@ -1481,12 +1527,7 @@ def query_records():
 
         # 构建结果
         results = []
-        updated_reference_count = False
         for record in pagination.items:
-            # 增加引用计数
-            record.reference_count = (record.reference_count or 0) + 1
-            updated_reference_count = True
-
             result = record.to_dict()
             # 添加来源追溯信息 - 跨数据库查询
             source_file = get_source_file_info(record.file_id)
@@ -1496,9 +1537,6 @@ def query_records():
                 result['source_department'] = source_file.department
                 result['source_engineer'] = source_file.engineer_name
             results.append(result)
-
-        if updated_reference_count:
-            db.session.commit()
 
         return jsonify({
             'success': True,
@@ -1510,7 +1548,7 @@ def query_records():
         })
 
     except Exception as e:
-        return jsonify({'success': False, 'message': f'查询失败: {str(e)}'}), 500
+        return api_internal_error('query_records', e)
 
 
 @app.route('/api/statistics', methods=['GET'])
@@ -1529,78 +1567,69 @@ def get_statistics():
             db.func.max(InquiryFile.upload_time).label('last_upload_time')
         ).group_by(InquiryFile.department).all()
 
-        # 按工程师统计（去重后统计）
-        # 去重条件：材料名 + 规格 + 供应商 + 报价日期
-        # 使用子查询先去重，再按工程师分组
-        from sqlalchemy import func, distinct
-
-        # 方法：对每个工程师，统计去重后的记录数
-        # 使用 DISTINCT 组合字段
-        engineer_stats_raw = db.session.query(
-            PriceRecord.engineer_name,
-            PriceRecord.department,
-            PriceRecord.material_name,
-            PriceRecord.specification,
-            PriceRecord.supplier,
-            PriceRecord.quote_date
+        # SQL聚合替代 Python .all() 分组，避免大数据量性能问题
+        engineer_unique_sub = db.session.query(
+            PriceRecord.engineer_name.label('engineer_name'),
+            PriceRecord.department.label('department'),
+            PriceRecord.material_name.label('material_name'),
+            PriceRecord.specification.label('specification'),
+            PriceRecord.supplier.label('supplier'),
+            PriceRecord.quote_date.label('quote_date')
         ).filter(
             PriceRecord.engineer_name != None,
             PriceRecord.engineer_name != ''
-        ).distinct().all()
+        ).distinct().subquery()
 
-        # 手动分组统计去重后的记录
-        engineer_counts = {}
-        engineer_latest = {}
-        for row in engineer_stats_raw:
-            key = (row.engineer_name, row.department)
-            engineer_counts[key] = engineer_counts.get(key, 0) + 1
-            if row.quote_date:
-                if key not in engineer_latest or row.quote_date > engineer_latest[key]:
-                    engineer_latest[key] = row.quote_date
+        engineer_stats_rows = db.session.query(
+            engineer_unique_sub.c.engineer_name,
+            engineer_unique_sub.c.department,
+            db.func.count().label('record_count'),
+            db.func.max(engineer_unique_sub.c.quote_date).label('latest_quote')
+        ).group_by(
+            engineer_unique_sub.c.engineer_name,
+            engineer_unique_sub.c.department
+        ).order_by(
+            db.func.count().desc()
+        ).all()
 
         engineer_stats = [
             {
-                'engineer_name': key[0],
-                'department': key[1],
-                'record_count': count,
-                'latest_quote': engineer_latest.get(key)
+                'engineer_name': row.engineer_name,
+                'department': row.department,
+                'record_count': row.record_count,
+                'latest_quote': row.latest_quote
             }
-            for key, count in engineer_counts.items()
+            for row in engineer_stats_rows
         ]
-        # 按记录数排序
-        engineer_stats.sort(key=lambda x: x['record_count'], reverse=True)
 
-        # 按材料类型统计（去重后统计）
-        material_stats_raw = db.session.query(
-            PriceRecord.material_name,
-            PriceRecord.specification,
-            PriceRecord.supplier,
-            PriceRecord.quote_date,
-            PriceRecord.reference_count
-        ).distinct().all()
+        material_unique_sub = db.session.query(
+            PriceRecord.material_name.label('material_name'),
+            PriceRecord.specification.label('specification'),
+            PriceRecord.supplier.label('supplier'),
+            PriceRecord.quote_date.label('quote_date'),
+            PriceRecord.reference_count.label('reference_count')
+        ).distinct().subquery()
 
-        material_counts = {}
-        material_refs = {}
-        material_latest = {}
-        for row in material_stats_raw:
-            mat = row.material_name
-            material_counts[mat] = material_counts.get(mat, 0) + 1
-            material_refs[mat] = material_refs.get(mat, 0) + (row.reference_count or 0)
-            if row.quote_date:
-                if mat not in material_latest or row.quote_date > material_latest[mat]:
-                    material_latest[mat] = row.quote_date
+        material_stats_rows = db.session.query(
+            material_unique_sub.c.material_name,
+            db.func.count().label('record_count'),
+            db.func.coalesce(db.func.sum(material_unique_sub.c.reference_count), 0).label('total_references'),
+            db.func.max(material_unique_sub.c.quote_date).label('latest_quote')
+        ).group_by(
+            material_unique_sub.c.material_name
+        ).order_by(
+            db.func.coalesce(db.func.sum(material_unique_sub.c.reference_count), 0).desc()
+        ).limit(10).all()
 
-        # 排序取前10
-        sorted_materials = sorted(material_counts.items(), key=lambda x: material_refs.get(x[0], 0), reverse=True)[:10]
         material_stats = [
             {
-                'material_name': mat,
-                'record_count': count,
-                'total_references': material_refs.get(mat, 0),
-                'latest_quote': material_latest.get(mat),
-                'reference_per_record': material_refs.get(mat, 0) / count if count > 0 else 0
+                'material_name': row.material_name,
+                'record_count': row.record_count,
+                'total_references': row.total_references,
+                'latest_quote': row.latest_quote,
+                'reference_per_record': (row.total_references / row.record_count) if row.record_count else 0
             }
-            for mat, count in sorted_materials
+            for row in material_stats_rows
         ]
 
         # 总体统计（去重后）
@@ -1651,7 +1680,7 @@ def get_statistics():
         })
 
     except Exception as e:
-        return jsonify({'success': False, 'message': f'统计失败: {str(e)}'}), 500
+        return api_internal_error('get_statistics', e)
 
 
 @app.route('/api/files', methods=['GET'])
@@ -1661,8 +1690,9 @@ def list_files():
     文件列表
     """
     try:
-        page = int(request.args.get('page', 1))
+        page = max(1, int(request.args.get('page', 1)))
         per_page = int(request.args.get('per_page', 20))
+        per_page = min(max(per_page, 1), 100)
 
         pagination = InquiryFile.query.order_by(InquiryFile.upload_time.desc()).paginate(
             page=page, per_page=per_page, error_out=False
@@ -1678,7 +1708,7 @@ def list_files():
         })
 
     except Exception as e:
-        return jsonify({'success': False, 'message': f'查询失败: {str(e)}'}), 500
+        return api_internal_error('list_files', e)
 
 
 @app.route('/api/records/<int:record_id>', methods=['GET'])
@@ -1708,7 +1738,7 @@ def get_record_detail(record_id):
         })
 
     except Exception as e:
-        return jsonify({'success': False, 'message': f'查询失败: {str(e)}'}), 500
+        return api_internal_error('get_record_detail', e)
 
 
 @app.route('/api/download_template')
@@ -1731,23 +1761,16 @@ def download_file(file_id):
         if not inquiry_file:
             return jsonify({'success': False, 'message': '文件不存在'}), 404
 
-        # 查找上传的文件
-        upload_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
-        # 文件名格式：时间戳_原始文件名
-        safe_original_name = secure_filename(inquiry_file.file_name or '')
-        for filename in os.listdir(upload_dir):
-            if filename.endswith('_' + inquiry_file.file_name) or (safe_original_name and filename.endswith('_' + safe_original_name)):
-                filepath = os.path.join(upload_dir, filename)
-                return send_from_directory(upload_dir, filename, as_attachment=True, download_name=inquiry_file.file_name)
-
-        # 如果没找到带时间戳的文件，尝试直接匹配
-        if os.path.exists(os.path.join(upload_dir, inquiry_file.file_name)):
-            return send_from_directory(upload_dir, inquiry_file.file_name, as_attachment=True)
+        filepath = resolve_uploaded_file_path(inquiry_file)
+        if filepath:
+            upload_dir = os.path.dirname(filepath)
+            stored_name = os.path.basename(filepath)
+            return send_from_directory(upload_dir, stored_name, as_attachment=True, download_name=inquiry_file.file_name)
 
         return jsonify({'success': False, 'message': '文件未找到'}), 404
 
     except Exception as e:
-        return jsonify({'success': False, 'message': f'下载失败: {str(e)}'}), 500
+        return api_internal_error('download_file', e)
 
 
 @app.route('/api/preview/<int:file_id>')
@@ -1759,14 +1782,7 @@ def preview_file(file_id):
         if not inquiry_file:
             return jsonify({'success': False, 'message': '文件不存在'}), 404
 
-        # 查找上传的文件
-        upload_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
-        filepath = None
-        safe_original_name = secure_filename(inquiry_file.file_name or '')
-        for filename in os.listdir(upload_dir):
-            if filename.endswith('_' + inquiry_file.file_name) or (safe_original_name and filename.endswith('_' + safe_original_name)):
-                filepath = os.path.join(upload_dir, filename)
-                break
+        filepath = resolve_uploaded_file_path(inquiry_file)
 
         if not filepath:
             return jsonify({'success': False, 'message': '文件未找到'}), 404
@@ -1820,7 +1836,7 @@ def preview_file(file_id):
         })
 
     except Exception as e:
-        return jsonify({'success': False, 'message': f'预览失败: {str(e)}'}), 500
+        return api_internal_error('preview_file', e)
 
 
 # ==================== 管理员接口 ====================
@@ -1837,7 +1853,7 @@ def admin_list_users():
             'total': len(users)
         })
     except Exception as e:
-        return jsonify({'success': False, 'message': f'查询失败: {str(e)}'}), 500
+        return api_internal_error('admin_list_users', e)
 
 
 @app.route('/api/admin/users', methods=['POST'])
@@ -1850,6 +1866,8 @@ def admin_add_user():
         real_name = data.get('real_name', '')
         department = data.get('department', '')
         role = data.get('role', 'user')
+        if role not in ALLOWED_USER_ROLES:
+            return jsonify({'success': False, 'message': '角色参数非法'}), 400
 
         # 验证手机号格式
         if not phone or len(phone) != 11 or not phone.startswith('1'):
@@ -1882,7 +1900,7 @@ def admin_add_user():
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'message': f'创建失败: {str(e)}'}), 500
+        return api_internal_error('admin_add_user', e)
 
 
 @app.route('/api/admin/users/<int:user_id>', methods=['PUT'])
@@ -1906,6 +1924,8 @@ def admin_update_user(user_id):
         if 'department' in data:
             user.department = data['department']
         if 'role' in data:
+            if data['role'] not in ALLOWED_USER_ROLES:
+                return jsonify({'success': False, 'message': '角色参数非法'}), 400
             user.role = data['role']
         if 'is_active' in data:
             user.is_active = data['is_active']
@@ -1920,7 +1940,7 @@ def admin_update_user(user_id):
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'message': f'更新失败: {str(e)}'}), 500
+        return api_internal_error('admin_update_user', e)
 
 
 @app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
@@ -1943,7 +1963,7 @@ def admin_delete_user(user_id):
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'message': f'删除失败: {str(e)}'}), 500
+        return api_internal_error('admin_delete_user', e)
 
 
 @app.route('/api/admin/users/<int:user_id>/reset-password', methods=['POST'])
@@ -1975,7 +1995,7 @@ def admin_reset_password(user_id):
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'message': f'重置失败: {str(e)}'}), 500
+        return api_internal_error('admin_reset_password', e)
 
 
 def init_db():
@@ -1983,6 +2003,7 @@ def init_db():
     with app.app_context():
         # 创建所有数据库的表（包括 binds 中的）
         db.create_all()
+        ensure_schema_compatibility()
         print("数据库初始化完成")
         print(f"  - 文件数据库: {INQUIRY_FILE_DB}")
         print(f"  - 明细数据库: {PRICE_RECORD_DB}")
@@ -1991,6 +2012,25 @@ def init_db():
 
         # 创建初始管理员（如果用户表为空）
         create_initial_admin()
+
+
+def ensure_schema_compatibility():
+    """
+    轻量 schema 兼容修复（主要针对 SQLite 运行中的增量字段）。
+    """
+    try:
+        engine = db.engines.get('inquiry_file')
+        if not engine:
+            return
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+
+        with engine.begin() as conn:
+            columns = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(inquiry_file)").fetchall()]
+            if 'stored_file_name' not in columns:
+                conn.exec_driver_sql("ALTER TABLE inquiry_file ADD COLUMN stored_file_name VARCHAR(255)")
+    except Exception as exc:
+        print(f"[SCHEMA] ensure_schema_compatibility failed: {exc}", flush=True)
 
 
 def create_initial_admin():

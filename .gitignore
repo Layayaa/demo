@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Local databases and runtime artifacts
+database/*.db
+database/*.sqlite
+uploads/
+backend/*.log
+backend/restart*.log
+backend/restart_pid.txt
+
+# Sensitive local files
+backend/cookies.txt
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
