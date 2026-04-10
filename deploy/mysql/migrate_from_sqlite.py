@@ -68,7 +68,7 @@ def sanitize_engineer_name(value):
     return text
 
 
-def migrate_table(sqlite_path, table_name, target_columns, mysql_conn, column_aliases=None, transform=None):
+def migrate_table(sqlite_path, table_name, target_columns, mysql_conn, column_aliases=None, transform=None, optional_columns=None):
     """
     迁移单个表。
 
@@ -84,6 +84,7 @@ def migrate_table(sqlite_path, table_name, target_columns, mysql_conn, column_al
     sqlite_cols = sqlite_table_columns(sqlite_conn, table_name)
     sqlite_col_set = set(sqlite_cols)
 
+    optional_columns = set(optional_columns or [])
     source_mapping = {}
     for target_col in target_columns:
         candidates = [target_col]
@@ -91,13 +92,13 @@ def migrate_table(sqlite_path, table_name, target_columns, mysql_conn, column_al
             candidates.extend(column_aliases[target_col])
         source_mapping[target_col] = next((c for c in candidates if c in sqlite_col_set), None)
 
-    missing_required = [k for k, v in source_mapping.items() if v is None]
+    missing_required = [k for k, v in source_mapping.items() if v is None and k not in optional_columns]
     if missing_required:
         print(f"  跳过 {table_name}: 源表缺少列 -> {missing_required}")
         sqlite_conn.close()
         return 0
 
-    query_cols = ', '.join(source_mapping[col] for col in target_columns)
+    query_cols = ', '.join(source_mapping[col] for col in target_columns if source_mapping[col] is not None)
     cursor = sqlite_conn.cursor()
     cursor.execute(f"SELECT {query_cols} FROM {table_name}")
     rows = cursor.fetchall()
@@ -107,8 +108,12 @@ def migrate_table(sqlite_path, table_name, target_columns, mysql_conn, column_al
         return 0
 
     prepared_rows = []
+    source_cols = [col for col in target_columns if source_mapping[col] is not None]
     for row in rows:
-        record = {target_columns[idx]: row[idx] for idx in range(len(target_columns))}
+        record = {col: row[idx] for idx, col in enumerate(source_cols)}
+        for target_col in target_columns:
+            if target_col not in record:
+                record[target_col] = None
         if transform:
             record = transform(record)
         prepared_rows.append([record[col] for col in target_columns])
@@ -170,8 +175,9 @@ def main():
     total += migrate_table(
         os.path.join(sqlite_db_dir, SQLITE_DBS['user']),
         'user',
-        ['id', 'phone', 'password_hash', 'real_name', 'department', 'role', 'is_active', 'created_at', 'last_login'],
+        ['id', 'username', 'phone', 'password_hash', 'real_name', 'department', 'role', 'is_active', 'created_at', 'last_login'],
         mysql_conn,
+        optional_columns={'username'},
     )
 
     print("\n[2/5] 迁移 inquiry_file")
@@ -199,9 +205,10 @@ def main():
     total += migrate_table(
         os.path.join(sqlite_db_dir, SQLITE_DBS['price_record']),
         'price_record',
-        ['record_id', 'file_id', 'reference_count', 'valid_until', 'project_name', 'material_name', 'specification', 'unit', 'price', 'is_tax_included', 'supplier', 'region', 'quote_date', 'remark', 'department', 'engineer_name', 'inquiry_type'],
+        ['record_id', 'file_id', 'reference_count', 'valid_until', 'project_name', 'material_name', 'specification', 'unit', 'price', 'is_tax_included', 'supplier', 'region', 'quote_date', 'remark', 'department', 'engineer_name', 'engineer_user_id', 'inquiry_type'],
         mysql_conn,
         transform=normalize_price_record,
+        optional_columns={'engineer_user_id'},
     )
 
     print("\n[5/5] 迁移 upload_audit")

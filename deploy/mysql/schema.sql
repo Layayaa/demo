@@ -12,6 +12,7 @@ USE inquiry_system;
 -- ============================================
 CREATE TABLE IF NOT EXISTS user (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(64) UNIQUE COMMENT '用户名',
     phone VARCHAR(11) UNIQUE NOT NULL COMMENT '手机号',
     password_hash VARCHAR(256) NOT NULL COMMENT '密码哈希',
     real_name VARCHAR(100) COMMENT '真实姓名',
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS user (
     is_active BOOLEAN DEFAULT TRUE COMMENT '账号状态',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     last_login DATETIME COMMENT '最后登录时间',
+    INDEX idx_username (username),
     INDEX idx_phone (phone),
     INDEX idx_department (department),
     INDEX idx_role (role)
@@ -99,6 +101,7 @@ CREATE TABLE IF NOT EXISTS price_record (
     remark TEXT COMMENT '备注',
     department VARCHAR(100) COMMENT '填报部门',
     engineer_name VARCHAR(100) NOT NULL COMMENT '填报工程师',
+    engineer_user_id INT COMMENT '关联用户ID',
     inquiry_type VARCHAR(50) COMMENT '询价类别',
     CONSTRAINT ck_price_record_engineer_nonempty CHECK (CHAR_LENGTH(TRIM(engineer_name)) > 0),
     INDEX idx_material (material_name),
@@ -106,10 +109,28 @@ CREATE TABLE IF NOT EXISTS price_record (
     INDEX idx_region (region),
     INDEX idx_quote_date (quote_date),
     INDEX idx_engineer (engineer_name),
+    INDEX idx_engineer_user (engineer_user_id),
     INDEX idx_supplier (supplier),
     INDEX idx_file_id (file_id),
+    INDEX idx_material_region_date (material_name, region, quote_date),
     FULLTEXT INDEX ft_material (material_name, specification, supplier, remark)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='询价记录表';
+
+-- ============================================
+-- 工程师绑定表（工程师名 <-> 用户）
+-- ============================================
+CREATE TABLE IF NOT EXISTS engineer_binding (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    engineer_name_raw VARCHAR(100) NOT NULL COMMENT '原始工程师名',
+    engineer_name_norm VARCHAR(100) NOT NULL COMMENT '标准化工程师名',
+    user_id INT NOT NULL COMMENT '关联用户ID',
+    bind_type VARCHAR(20) DEFAULT 'auto' COMMENT '绑定方式: auto/manual',
+    confidence DOUBLE DEFAULT 1.0 COMMENT '匹配置信度',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_binding_norm (engineer_name_norm),
+    INDEX idx_binding_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工程师绑定表';
 
 -- ============================================
 -- 默认管理员由应用启动逻辑自动创建：

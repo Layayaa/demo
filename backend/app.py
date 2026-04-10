@@ -1,4 +1,4 @@
-"""
+﻿"""
 企业内部历史询价复用系统 - Flask主应用
 """
 import os
@@ -6,6 +6,7 @@ import sys
 import json
 import html
 import hmac
+import re
 import time
 import secrets
 import threading
@@ -18,19 +19,18 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 import pandas as pd
 from werkzeug.utils import secure_filename
-from werkzeug.middleware.proxy_fix import ProxyFix
 
-from models import db, InquiryFile, PriceRecord, UploadAudit, QueryLog, User
+from models import db, InquiryFile, PriceRecord, UploadAudit, QueryLog, User, EngineerBinding
 from template_config import (
     FIELD_KEYWORDS, REQUIRED_FIELDS, DATA_CLEANING_RULES,
     match_column_to_field, build_column_mapping, detect_multi_supplier,
     clean_value, clean_price, clean_supplier, clean_date
 )
 from nlp_parser import NLPParser, parse_query
+from smart_query_service import enrich_parsed_params, rank_records
 
 # 创建Flask应用
 app = Flask(__name__, static_folder='../frontend/static', template_folder='../frontend')
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # 配置 - 四库分离
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -80,11 +80,11 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 CSRF_HEADER_NAME = 'X-CSRF-Token'
 CSRF_MUTATION_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
-CSRF_EXEMPT_PATHS = {'/api/login'}
+CSRF_EXEMPT_PATHS = {'/api/login', '/api/register'}
 
 RATE_LIMIT_DEFAULT = (120, 60)
 RATE_LIMIT_RULES = {
-    '/api/login': (10, 60),
+    '/api/login': (5, 300),
     '/api/upload': (20, 300),
     '/api/natural_query': (60, 60),
     '/api/query': (90, 60)
@@ -94,16 +94,12 @@ _rate_limit_lock = threading.Lock()
 ALLOWED_USER_ROLES = {'admin', 'user'}
 _schema_checked = False
 
-# 启用CORS
+# 启用CORS（排除登录相关路由）
 cors_origins_env = os.environ.get('CORS_ORIGINS', '').strip()
 if cors_origins_env:
     cors_origins = [origin.strip() for origin in cors_origins_env.split(',') if origin.strip()]
 else:
-    cors_origins = [
-        'http://localhost:5000', 'http://127.0.0.1:5000',
-        'http://localhost:5001', 'http://127.0.0.1:5001',
-        'http://localhost',
-    ]
+    cors_origins = ['http://localhost:5000', 'http://127.0.0.1:5000']
 CORS(app, supports_credentials=True, origins=cors_origins)
 
 # 初始化数据库
@@ -160,6 +156,232 @@ def normalize_engineer_name(value):
     if text.lower() in {'nan', 'none', 'null', 'n/a', '--', '-'}:
         return ''
     return text
+
+
+def normalize_engineer_key(value):
+    """工程师名标准化，用于用户账号关联。"""
+    text = normalize_engineer_name(value).lower()
+    if not text:
+        return ''
+    text = re.sub(r'\s+', '', text)
+    text = text.replace('工程师', '').replace('工程', '').replace('老师', '')
+    if text.endswith('工') and len(text) > 1:
+        text = text[:-1]
+    return text
+
+
+def mask_phone(phone):
+    phone = (phone or '').strip()
+    if len(phone) != 11:
+        return ''
+    return f"{phone[:3]}****{phone[-4:]}"
+
+
+def get_user_by_engineer_name(engineer_name):
+    """根据工程师名查找已绑定用户。"""
+    norm_name = normalize_engineer_key(engineer_name)
+    if not norm_name:
+        return None
+
+    binding = EngineerBinding.query.filter_by(engineer_name_norm=norm_name).order_by(EngineerBinding.id.asc()).first()
+    if binding:
+        return User.query.get(binding.user_id)
+
+    # 兜底：按实名标准化匹配
+    users = User.query.filter(User.real_name != None, User.real_name != '').all()
+    for user in users:
+        if normalize_engineer_key(user.real_name) == norm_name:
+            return user
+    return None
+
+
+def get_user_by_upload_user(upload_user):
+    """根据上传人字段匹配用户账号（优先用户名，其次实名）。"""
+    name = normalize_engineer_name(upload_user)
+    if not name:
+        return None
+
+    lowered = name.lower()
+    user = User.query.filter(
+        User.username != None,
+        db.func.lower(User.username) == lowered
+    ).first()
+    if user:
+        return user
+
+    user = User.query.filter(User.real_name == name).first()
+    if user:
+        return user
+
+    return User.query.filter(
+        User.real_name != None,
+        db.func.lower(User.real_name) == lowered
+    ).first()
+
+
+def get_upload_user_display(upload_user):
+    """上传人显示名：优先账号实名，兜底原始上传人字段。"""
+    user = get_user_by_upload_user(upload_user)
+    if user and normalize_engineer_name(user.real_name):
+        return normalize_engineer_name(user.real_name)
+    return normalize_engineer_name(upload_user)
+
+
+def normalize_specification_text(value):
+    """规格型号查询归一化：去空格和常见中英文标点。"""
+    text = (value or '').strip().lower()
+    if not text:
+        return ''
+    return re.sub(r'[\s，。！？、,.!?；;：:\-_/\\|（）()\[\]【】]+', '', text)
+
+
+def build_normalized_spec_expr(column_expr):
+    """数据库侧规格归一化表达式，兼容 SQLite/MySQL。"""
+    expr = db.func.lower(db.func.coalesce(column_expr, ''))
+    for token in [' ', '\t', '\r', '\n', '，', ',', '。', '.', '；', ';', '：', ':', '-', '_', '/', '\\', '|', '（', '）', '(', ')', '[', ']', '【', '】']:
+        expr = db.func.replace(expr, token, '')
+    return expr
+
+
+def apply_specification_partial_filter(query, specification):
+    """规格型号部分匹配：原始 like + 归一化 like + 词项 like。"""
+    raw = (specification or '').strip()
+    if not raw:
+        return query
+
+    normalized = normalize_specification_text(raw)
+    normalized_expr = build_normalized_spec_expr(PriceRecord.specification)
+
+    conditions = [PriceRecord.specification.like(f'%{raw}%')]
+    if normalized:
+        conditions.append(normalized_expr.like(f'%{normalized}%'))
+
+    tokens = [item for item in re.split(r'[\s,，;；:/：\\\-_.]+', raw) if item]
+    for token in tokens:
+        if len(token) >= 2:
+            conditions.append(PriceRecord.specification.like(f'%{token}%'))
+
+    return query.filter(db.or_(*conditions))
+
+
+UPLOADER_LOOKUP_NOISE = (
+    '谁上传了这个报价', '这个报价谁上传的', '报价是谁上传的', '上传人是谁',
+    '谁上传', '谁传的报价', '谁提交的报价', '联系上传人', '上传这个报价的人',
+    '谁传的文件', '文件是谁上传的', '谁传上来的', '这份文件在谁手上',
+    '这个文件在谁手里', '谁有这份文件', '谁持有这份资料', '资料在谁手上',
+    '这个资料谁有', '报价', '文件', '资料', '询价', '记录', '是谁', '是谁上传的'
+)
+
+
+def extract_lookup_subject(query_text):
+    """去除意图噪声词，提取查询主体（材料/文件关键词）。"""
+    text = (query_text or '').strip()
+    if not text:
+        return ''
+
+    cleaned = text
+    for token in UPLOADER_LOOKUP_NOISE:
+        cleaned = cleaned.replace(token, ' ')
+    cleaned = re.sub(r'[\s，。！？、,.!?；;：:\-_/()（）\[\]【】]+', ' ', cleaned).strip()
+    return cleaned[:100]
+
+
+FOLLOW_UP_REFERENCE_TOKENS = (
+    '这份', '这个', '这条', '该', '此', '上面', '刚才', '上一条', '上述', '刚刚'
+)
+
+FOLLOW_UP_REFERENCE_SUBJECTS = {
+    '这份', '这个', '这条', '该', '此', '上面', '刚才', '上一条', '上述',
+    '这份报价', '这个报价', '该报价', '此报价', '这份文件', '这个文件',
+    '该文件', '此文件', '这份资料', '这个资料', '该资料', '此资料'
+}
+
+
+def _compact_text(value):
+    text = (value or '').strip()
+    text = re.sub(r'[\s，。！？、,.!?；;：:\-_/()（）\[\]【】]+', '', text)
+    return text
+
+
+def is_followup_reference_query(query_text, lookup_subject):
+    """判断是否是“这份/这个/上面”这类承接上一轮的追问。"""
+    compact_query = _compact_text(query_text)
+    compact_subject = _compact_text(lookup_subject)
+
+    has_reference_word = any(token in query_text for token in FOLLOW_UP_REFERENCE_TOKENS)
+    if compact_subject in FOLLOW_UP_REFERENCE_SUBJECTS:
+        return True
+
+    if has_reference_word and (not compact_subject or compact_subject in FOLLOW_UP_REFERENCE_SUBJECTS):
+        return True
+
+    if has_reference_word and '谁上传' in compact_query:
+        return True
+
+    return False
+
+
+def is_engineer_followup_query(query_text):
+    """Detect follow-up requests asking who is responsible."""
+    text = _compact_text(query_text)
+    if not text:
+        return False
+
+    trigger_tokens = (
+        '谁负责', '谁负责的', '负责人', '负责人是谁', '谁在负责',
+        '谁跟进', '谁在跟进', '谁经手', '谁处理', '哪个工程师',
+        '工程师是谁', '联系工程师'
+    )
+    return any(token in text for token in trigger_tokens)
+
+
+def ensure_engineer_binding(user, source_name, bind_type='auto', confidence=1.0):
+    """确保工程师名与用户存在绑定关系。"""
+    if not user:
+        return
+    norm_name = normalize_engineer_key(source_name)
+    raw_name = normalize_engineer_name(source_name)
+    if not norm_name or not raw_name:
+        return
+
+    binding = EngineerBinding.query.filter_by(engineer_name_norm=norm_name).first()
+    if binding:
+        binding.user_id = user.id
+        binding.bind_type = bind_type
+        binding.confidence = confidence
+        binding.engineer_name_raw = raw_name
+        return
+
+    db.session.add(EngineerBinding(
+        engineer_name_raw=raw_name,
+        engineer_name_norm=norm_name,
+        user_id=user.id,
+        bind_type=bind_type,
+        confidence=confidence
+    ))
+
+
+def auto_bind_engineer_for_user(user):
+    """注册后自动做工程师名关联。"""
+    if not user:
+        return 0
+
+    bound_count = 0
+    if user.real_name:
+        ensure_engineer_binding(user, user.real_name, bind_type='auto', confidence=1.0)
+        bound_count += 1
+
+    # 历史数据中同名工程师自动绑定
+    normalized_name = normalize_engineer_key(user.real_name)
+    if normalized_name:
+        distinct_engineers = db.session.query(PriceRecord.engineer_name).distinct().all()
+        for row in distinct_engineers:
+            candidate = row[0]
+            if normalize_engineer_key(candidate) == normalized_name:
+                ensure_engineer_binding(user, candidate, bind_type='auto', confidence=1.0)
+                bound_count += 1
+
+    return bound_count
 
 
 def get_or_create_csrf_token():
@@ -376,26 +598,90 @@ def login_page():
     return send_from_directory('../frontend', 'login.html')
 
 
+@app.route('/register')
+def register_page():
+    """注册页面"""
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    return send_from_directory('../frontend', 'register.html')
+
+
+@app.route('/api/register', methods=['POST'])
+def api_register():
+    """用户注册接口"""
+    try:
+        data = request.get_json() or {}
+        username = str(data.get('username', '')).strip()
+        real_name = str(data.get('real_name', '')).strip()
+        phone = str(data.get('phone', '')).strip()
+        department = str(data.get('department', '')).strip()
+        password = str(data.get('password', ''))
+        confirm_password = str(data.get('confirm_password', ''))
+
+        if not username or not re.fullmatch(r'[A-Za-z0-9_]{3,32}', username):
+            return jsonify({'success': False, 'message': '用户名需为3-32位字母数字下划线'}), 400
+        if not real_name:
+            return jsonify({'success': False, 'message': '真实姓名不能为空'}), 400
+        if not phone or len(phone) != 11 or not phone.startswith('1'):
+            return jsonify({'success': False, 'message': '手机号格式不正确'}), 400
+        if len(password) < 8 or not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
+            return jsonify({'success': False, 'message': '密码至少8位且包含字母和数字'}), 400
+        if password != confirm_password:
+            return jsonify({'success': False, 'message': '两次密码输入不一致'}), 400
+
+        if User.query.filter_by(username=username).first():
+            return jsonify({'success': False, 'message': '用户名已存在'}), 400
+        if User.query.filter_by(phone=phone).first():
+            return jsonify({'success': False, 'message': '手机号已被使用'}), 400
+
+        user = User(
+            username=username,
+            phone=phone,
+            real_name=real_name,
+            department=department,
+            role='user',
+            is_active=True
+        )
+        user.set_password(password)
+        db.session.add(user)
+        db.session.flush()
+
+        bound_count = auto_bind_engineer_for_user(user)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': '注册成功',
+            'bound_count': bound_count,
+            'user': user.to_dict()
+        })
+    except Exception as e:
+        db.session.rollback()
+        return api_internal_error('api_register', e)
+
+
 @app.route('/api/login', methods=['POST'])
 def api_login():
     """登录接口"""
     try:
         data = request.get_json() or {}
-        phone = data.get('phone', '').strip()
+        account = str(data.get('phone') or data.get('username') or data.get('account') or '').strip()
         password = data.get('password', '')
 
-        # 验证手机号格式
-        if not phone or len(phone) != 11 or not phone.startswith('1'):
-            return jsonify({'success': False, 'message': '手机号或密码错误'}), 400
+        if not account:
+            return jsonify({'success': False, 'message': '账号或密码错误'}), 400
 
         # 查询用户
-        user = User.query.filter_by(phone=phone).first()
+        if len(account) == 11 and account.startswith('1'):
+            user = User.query.filter_by(phone=account).first()
+        else:
+            user = User.query.filter_by(username=account).first()
         if not user:
-            return jsonify({'success': False, 'message': '手机号或密码错误'}), 400
+            return jsonify({'success': False, 'message': '账号或密码错误'}), 400
 
         # 验证密码
         if not user.check_password(password):
-            return jsonify({'success': False, 'message': '手机号或密码错误'}), 400
+            return jsonify({'success': False, 'message': '账号或密码错误'}), 400
 
         # 检查账号状态
         if not user.is_active:
@@ -488,6 +774,12 @@ def index():
     return send_from_directory('../frontend', 'index.html')
 
 
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    """应用健康检查"""
+    return jsonify({'success': True, 'status': 'ok', 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+
+
 @app.route('/api/upload', methods=['POST'])
 @api_login_required
 def upload_file():
@@ -506,11 +798,23 @@ def upload_file():
             return jsonify({'success': False, 'message': '只支持Excel文件(.xlsx, .xls)和CSV文件(.csv)'}), 400
 
         # 获取表单数据
-        upload_user = request.form.get('upload_user', '未知')
-        department = request.form.get('department', '')
+        form_upload_user = normalize_engineer_name(request.form.get('upload_user', ''))
+        if current_user.is_authenticated:
+            # 上传人固定取当前登录账号（优先真实姓名），避免与Excel工程师混淆
+            upload_user = normalize_engineer_name(current_user.real_name) or normalize_engineer_name(current_user.username) or normalize_engineer_name(current_user.phone) or form_upload_user or '未知'
+            # 填报部门固定取上传人账号部门，不依赖前端输入
+            department = normalize_engineer_name(current_user.department) or '未知'
+        else:
+            upload_user = form_upload_user or '未知'
+            department = normalize_engineer_name(request.form.get('department', '')) or '未知'
+
         legacy_engineer_name = normalize_engineer_name(request.form.get('engineer_name', ''))
         batch_no = request.form.get('batch_no', '')
-        validity_months = int(request.form.get('validity_months', 12))  # 默认12个月
+        try:
+            validity_months = int(request.form.get('validity_months', 12))
+        except (TypeError, ValueError):
+            validity_months = 12
+        validity_months = max(1, min(validity_months, 60))
 
         # 检查是否已经查询过相关材料（业务闭环：先查询后上传）
         query_materials = []
@@ -723,6 +1027,17 @@ def upload_file():
             records_to_add = []
             engineer_candidates = extract_engineer_candidates()
             extracted_engineer_name = engineer_candidates[0] if engineer_candidates else ''
+            engineer_user_cache = {}
+
+            def resolve_engineer_user_id(name):
+                key = normalize_engineer_key(name)
+                if not key:
+                    return None
+                if key in engineer_user_cache:
+                    return engineer_user_cache[key]
+                user = get_user_by_engineer_name(name)
+                engineer_user_cache[key] = user.id if user else None
+                return engineer_user_cache[key]
 
             if not extracted_engineer_name:
                 fail_message = '未从Excel提取到“填报工程师”，已拒绝入库'
@@ -865,6 +1180,7 @@ def upload_file():
                                 remark=get_cleaned_value(row, '备注'),
                                 department=get_cleaned_value(row, '填报部门') or department,
                                 engineer_name=record_engineer_name,
+                                engineer_user_id=resolve_engineer_user_id(record_engineer_name),
                                 inquiry_type=get_cleaned_value(row, '询价类别')
                             )
                             records_to_add.append(price_record)
@@ -937,6 +1253,7 @@ def upload_file():
                             remark=get_cleaned_value(row, '备注'),
                             department=get_cleaned_value(row, '填报部门') or department,
                             engineer_name=record_engineer_name,
+                            engineer_user_id=resolve_engineer_user_id(record_engineer_name),
                             inquiry_type=get_cleaned_value(row, '询价类别')
                         )
                         records_to_add.append(price_record)
@@ -1190,16 +1507,18 @@ def natural_language_query():
 
         query_text = data.get('query', '') if data else ''
         page = max(1, int((data or {}).get('page', 1)))
-        per_page = int((data or {}).get('per_page', 20))
-        per_page = min(max(per_page, 1), 100)
+        page_size_arg = (data or {}).get('page_size', (data or {}).get('pageSize'))
+        per_page = int(page_size_arg) if page_size_arg else int((data or {}).get('per_page', 20))
+        per_page = min(max(per_page, 1), 5000)
         max_scan = int((data or {}).get('max_scan', 500))
-        max_scan = min(max(max_scan, 50), 2000)
+        max_scan = min(max(max_scan, 50), 5000)
 
         if not query_text:
             return jsonify({'success': False, 'message': '查询文本不能为空'}), 400
 
-        # 解析自然语言查询
+        # 解析自然语言查询（规则优化版）
         parsed_params = parse_natural_language_query(query_text)
+        parsed_params = enrich_parsed_params(query_text, parsed_params)
 
         # 调试输出
         print(f"[自然语言查询] 输入: {query_text}", flush=True)
@@ -1210,31 +1529,117 @@ def natural_language_query():
         print(f"[自然语言查询] 解析结果 start_date: {parsed_params.get('start_date')}", flush=True)
         print(f"[自然语言查询] 解析结果 parsed_intent: {parsed_params.get('parsed_intent')}", flush=True)
 
-        # 确保parsed_params有正确的intent
+        # 确保 parsed_params 有正确的 intent
         if not parsed_params.get('parsed_intent'):
             parsed_params['parsed_intent'] = 'price_inquiry'
+
+        lookup_subject = extract_lookup_subject(query_text)
+        parsed_params['lookup_subject'] = lookup_subject
+
+        # 上一轮自然语言查询上下文（用于“这份/这个/上面”的追问）
+        last_context = session.get('last_natural_query_context') or {}
+        context_file_ids = []
+        if isinstance(last_context.get('file_ids'), list):
+            for value in last_context.get('file_ids'):
+                try:
+                    fid = int(value)
+                    if fid > 0:
+                        context_file_ids.append(fid)
+                except (TypeError, ValueError):
+                    continue
+
         if not parsed_params.get('material_name'):
-            # 使用原始查询作为材料名称（降级搜索）
-            parsed_params['material_name'] = query_text
+            # 对价格查询允许降级；工程师/上传人查询不直接回退整句，避免把“谁上传了...”当材料名
+            if parsed_params.get('parsed_intent') not in {'engineer_lookup', 'uploader_lookup'}:
+                parsed_params['material_name'] = query_text
+            else:
+                parsed_params['material_name'] = ''
+
+        # Avoid treating short follow-up questions as material names.
+        compact_query_text = _compact_text(query_text)
+        compact_material_name = _compact_text(parsed_params.get('material_name') or '')
+        if (
+            parsed_params.get('parsed_intent') == 'engineer_lookup'
+            and compact_material_name
+            and compact_material_name == compact_query_text
+            and is_engineer_followup_query(query_text)
+        ):
+            parsed_params['material_name'] = ''
+
+        # 上传人追问承接：如“这份报价谁上传的”自动继承上一轮查询条件/文件范围
+        if parsed_params.get('parsed_intent') == 'uploader_lookup':
+            is_followup = is_followup_reference_query(query_text, lookup_subject)
+            missing_filters = not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region') or len(lookup_subject) >= 2)
+            if is_followup and missing_filters and last_context:
+                parsed_params['material_name'] = parsed_params.get('material_name') or (last_context.get('material_name') or '')
+                parsed_params['specification'] = parsed_params.get('specification') or (last_context.get('specification') or '')
+                parsed_params['region'] = parsed_params.get('region') or (last_context.get('region') or '')
+                if not lookup_subject:
+                    lookup_subject = last_context.get('lookup_subject') or ''
+                    parsed_params['lookup_subject'] = lookup_subject
+                if context_file_ids:
+                    parsed_params['context_file_ids'] = context_file_ids
+                parsed_params['context_inherited'] = True
+                print(f"[自然语言查询] uploader_lookup 使用上下文承接: files={len(context_file_ids)}", flush=True)
+
+        # ??????????????????????????/????
+        # ??????????????????????????/????
+        if parsed_params.get('parsed_intent') == 'engineer_lookup':
+            is_followup = is_followup_reference_query(query_text, lookup_subject) or is_engineer_followup_query(query_text)
+            missing_filters = not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region'))
+            if is_followup and missing_filters and last_context:
+                parsed_params['material_name'] = parsed_params.get('material_name') or (last_context.get('material_name') or '')
+                parsed_params['specification'] = parsed_params.get('specification') or (last_context.get('specification') or '')
+                parsed_params['region'] = parsed_params.get('region') or (last_context.get('region') or '')
+                if not lookup_subject:
+                    lookup_subject = last_context.get('lookup_subject') or ''
+                    parsed_params['lookup_subject'] = lookup_subject
+                if context_file_ids:
+                    parsed_params['context_file_ids'] = context_file_ids
+                parsed_params['context_inherited'] = True
+                print(f"[natural_query] engineer_lookup context inherited: files={len(context_file_ids)}", flush=True)
+
+            has_context = bool(parsed_params.get('context_file_ids'))
+            if not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region') or has_context):
+                return jsonify({'success': False, 'message': '请补充材料名称或规格后再查询负责人'}), 400
+
+        if parsed_params.get('parsed_intent') == 'uploader_lookup':
+            has_context = bool(parsed_params.get('context_file_ids'))
+            if not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region') or len(lookup_subject) >= 2 or has_context):
+                return jsonify({'success': False, 'message': '请补充材料名、规格或文件关键词后再查询上传人'}), 400
 
         # 构建数据库查询
         query = PriceRecord.query
 
         # 判断是否有解析到参数
         has_params = parsed_params['material_name'] or parsed_params['specification'] or parsed_params['region']
+        active_context_file_ids = parsed_params.get('context_file_ids') or context_file_ids
 
         if not has_params:
-            # 如果没有解析到任何参数，使用原始文本进行模糊搜索
-            # 对材料名称、规格型号、供应商进行搜索
-            search_text = query_text.strip()
-            or_conditions = [
-                PriceRecord.material_name.like(f'%{search_text}%'),
-                PriceRecord.specification.like(f'%{search_text}%'),
-                PriceRecord.supplier.like(f'%{search_text}%'),
-                PriceRecord.remark.like(f'%{search_text}%')
-            ]
-            query = query.filter(db.or_(*or_conditions))
-            print(f"[自然语言查询] 未解析到参数，使用原始文本模糊搜索: {search_text}")
+            if parsed_params.get('parsed_intent') in {'uploader_lookup', 'engineer_lookup'} and active_context_file_ids:
+                query = query.filter(PriceRecord.file_id.in_(active_context_file_ids))
+                print(f"[自然语言查询] uploader_lookup 使用上下文 file_id 过滤: {len(active_context_file_ids)}", flush=True)
+            else:
+                # 如果没有解析到参数，使用主体词（去噪）做模糊搜索
+                search_text = (lookup_subject or query_text).strip()
+                or_conditions = [
+                    PriceRecord.material_name.like(f'%{search_text}%'),
+                    PriceRecord.specification.like(f'%{search_text}%'),
+                    PriceRecord.supplier.like(f'%{search_text}%'),
+                    PriceRecord.remark.like(f'%{search_text}%')
+                ]
+
+                if parsed_params.get('parsed_intent') == 'uploader_lookup' and search_text:
+                    file_ids = [
+                        row.file_id for row in InquiryFile.query.filter(
+                            InquiryFile.file_name.like(f'%{search_text}%')
+                        ).limit(200).all() if row.file_id is not None
+                    ]
+                    if file_ids:
+                        or_conditions.append(PriceRecord.file_id.in_(file_ids))
+
+                query = query.filter(db.or_(*or_conditions))
+                print(f"[自然语言查询] 未解析到参数，使用主体词模糊搜索: {search_text}", flush=True)
         else:
             # 应用解析的参数
             if parsed_params['material_name']:
@@ -1271,6 +1676,9 @@ def natural_language_query():
                 if or_conditions:
                     query = query.filter(db.or_(*or_conditions))
 
+            if parsed_params.get('parsed_intent') in {'uploader_lookup', 'engineer_lookup'} and active_context_file_ids:
+                query = query.filter(PriceRecord.file_id.in_(active_context_file_ids))
+
         # 使用解析出的时间范围（如果有）
         start_date = parsed_params.get('start_date')
         end_date = parsed_params.get('end_date')
@@ -1288,60 +1696,10 @@ def natural_language_query():
         # 限制单次扫描上限，避免自然语言查询拉全表
         all_records = query.limit(max_scan).all()
 
-        # 智能排序
+        # 语义排序（同义词 + 词项命中 + 严格词组）
         if has_params:
-            # 计算匹配度得分
-            def calculate_match_score(record):
-                score = 0
-                max_score = 0
-
-                # 材料名称匹配
-                if parsed_params['material_name']:
-                    if record.material_name and parsed_params['material_name'] in record.material_name:
-                        score += 30
-                    max_score += 30
-
-                # 规格型号匹配
-                if parsed_params['specification']:
-                    if record.specification and parsed_params['specification'] in record.specification:
-                        score += 25
-                    max_score += 25
-
-                # 地区匹配
-                if parsed_params['region']:
-                    if record.region and parsed_params['region'] in record.region:
-                        score += 20
-                    max_score += 20
-
-                # 时间匹配（最近的价格优先）
-                if record.quote_date:
-                    days_diff = (datetime.now().date() - record.quote_date).days
-                    if days_diff <= 30:  # 最近30天
-                        score += max(0, 15 - days_diff/2)  # 越近得分越高
-                    max_score += 15
-
-                # 价格匹配（如果查询中包含价格）
-                if parsed_params['price']:
-                    if record.price:
-                        price_diff = abs(record.price - parsed_params['price'])
-                        if price_diff <= parsed_params['price'] * 0.2:  # 价格差异在20%以内
-                            score += max(0, 10 - price_diff/5)
-                        max_score += 10
-
-                # 归一化得分
-                return score / max_score if max_score > 0 else 0
-
-            # 应用智能排序
-            results_with_scores = []
-            for record in all_records:
-                score = calculate_match_score(record)
-                results_with_scores.append((record, score))
-
-            # 按得分排序（降序）
-            results_with_scores.sort(key=lambda x: x[1], reverse=True)
-            sorted_records = [item[0] for item in results_with_scores]
+            sorted_records = rank_records(all_records, parsed_params)
         else:
-            # 没有匹配条件时，按报价时间倒序
             sorted_records = sorted(all_records, key=lambda x: x.quote_date or datetime.min.date(), reverse=True)
 
         # 构建结果
@@ -1353,9 +1711,134 @@ def natural_language_query():
             if source_file:
                 result['source_file_name'] = source_file.file_name
                 result['source_upload_time'] = source_file.upload_time.strftime('%Y-%m-%d %H:%M:%S') if source_file.upload_time else None
+                result['source_upload_user'] = get_upload_user_display(source_file.upload_user) or ''
                 result['source_department'] = source_file.department
                 result['source_engineer'] = source_file.engineer_name
+
+            # 工程师联系方式默认仅返回脱敏信息
+            bound_user = None
+            if record.engineer_user_id:
+                bound_user = User.query.get(record.engineer_user_id)
+            if not bound_user:
+                bound_user = get_user_by_engineer_name(record.engineer_name)
+
+            if bound_user:
+                result['engineer_user_id'] = bound_user.id
+                result['engineer_phone_masked'] = mask_phone(bound_user.phone)
+                result['engineer_contact_available'] = True
+            else:
+                result['engineer_user_id'] = None
+                result['engineer_phone_masked'] = ''
+                result['engineer_contact_available'] = False
             results.append(result)
+
+        # 保存自然语言查询上下文，支持“这份/这个/上面”的追问
+        context_ids = []
+        seen_ids = set()
+        for item in results:
+            file_id = item.get('file_id')
+            if isinstance(file_id, int) and file_id > 0 and file_id not in seen_ids:
+                context_ids.append(file_id)
+                seen_ids.add(file_id)
+            if len(context_ids) >= 200:
+                break
+
+        session['last_natural_query_context'] = {
+            'query_text': query_text,
+            'parsed_intent': parsed_params.get('parsed_intent') or '',
+            'material_name': parsed_params.get('material_name') or '',
+            'specification': parsed_params.get('specification') or '',
+            'region': parsed_params.get('region') or '',
+            'lookup_subject': parsed_params.get('lookup_subject') or '',
+            'file_ids': context_ids,
+            'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        session.modified = True
+
+        # 工程师查询模式（模板匹配，不接入AI）
+        if parsed_params.get('parsed_intent') == 'engineer_lookup':
+            engineer_map = {}
+            for item in results:
+                key = item.get('engineer_user_id') or item.get('engineer_name') or 'unknown'
+                if key not in engineer_map:
+                    engineer_map[key] = {
+                        'engineer_name': item.get('engineer_name') or '未知',
+                        'department': item.get('department') or item.get('source_department') or '未知',
+                        'engineer_user_id': item.get('engineer_user_id'),
+                        'phone_masked': item.get('engineer_phone_masked') or '',
+                        'is_bound': bool(item.get('engineer_user_id')),
+                        'material_count': 0,
+                        'latest_quote': item.get('quote_date')
+                    }
+                engineer_map[key]['material_count'] += 1
+                if item.get('quote_date') and (not engineer_map[key]['latest_quote'] or item.get('quote_date') > engineer_map[key]['latest_quote']):
+                    engineer_map[key]['latest_quote'] = item.get('quote_date')
+
+            engineer_data = list(engineer_map.values())
+            engineer_data.sort(key=lambda x: (x.get('material_count') or 0), reverse=True)
+            total = len(engineer_data)
+            pages = (total + per_page - 1) // per_page if total > 0 else 1
+            start = (page - 1) * per_page
+            end = start + per_page
+            page_data = engineer_data[start:end] if start < total else []
+            return jsonify({
+                'success': True,
+                'engineer_mode': True,
+                'data': page_data,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'pages': pages,
+                'parsed_params': parsed_params
+            })
+
+        # 上传人查询模式（按来源文件聚合）
+        if parsed_params.get('parsed_intent') == 'uploader_lookup':
+            uploader_map = {}
+            for item in results:
+                file_id = item.get('file_id')
+                source_file = get_source_file_info(file_id)
+                if not source_file:
+                    continue
+
+                key = source_file.file_id
+                if key not in uploader_map:
+                    uploader_user = get_user_by_upload_user(source_file.upload_user)
+                    uploader_map[key] = {
+                        'file_id': source_file.file_id,
+                        'file_name': source_file.file_name or '-',
+                        'upload_user': get_upload_user_display(source_file.upload_user) or '未知',
+                        'upload_time': source_file.upload_time.strftime('%Y-%m-%d %H:%M:%S') if source_file.upload_time else None,
+                        'department': source_file.department or '未知',
+                        'engineer_name': source_file.engineer_name or '未知',
+                        'uploader_user_id': uploader_user.id if uploader_user else None,
+                        'phone_masked': mask_phone(uploader_user.phone) if uploader_user else '',
+                        'is_bound': bool(uploader_user),
+                        'record_count': 0,
+                        'latest_quote': item.get('quote_date')
+                    }
+
+                uploader_map[key]['record_count'] += 1
+                if item.get('quote_date') and (not uploader_map[key]['latest_quote'] or item.get('quote_date') > uploader_map[key]['latest_quote']):
+                    uploader_map[key]['latest_quote'] = item.get('quote_date')
+
+            uploader_data = list(uploader_map.values())
+            uploader_data.sort(key=lambda x: ((x.get('record_count') or 0), (x.get('upload_time') or '')), reverse=True)
+            total = len(uploader_data)
+            pages = (total + per_page - 1) // per_page if total > 0 else 1
+            start = (page - 1) * per_page
+            end = start + per_page
+            page_data = uploader_data[start:end] if start < total else []
+            return jsonify({
+                'success': True,
+                'uploader_mode': True,
+                'data': page_data,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'pages': pages,
+                'parsed_params': parsed_params
+            })
 
         # 比价分析（如果查询意图是比价）
         comparison_data = None
@@ -1488,7 +1971,8 @@ def query_records():
         start_date = request.args.get('start_date', '')
         end_date = request.args.get('end_date', '')
         page = max(1, int(request.args.get('page', 1)))
-        per_page = int(request.args.get('per_page', 20))
+        page_size_arg = request.args.get('page_size', request.args.get('pageSize', None))
+        per_page = int(page_size_arg) if page_size_arg else int(request.args.get('per_page', 20))
         per_page = min(max(per_page, 1), 100)
 
         # 构建查询
@@ -1498,7 +1982,7 @@ def query_records():
             query = query.filter(PriceRecord.material_name.like(f'%{material_name}%'))
 
         if specification:
-            query = query.filter(PriceRecord.specification.like(f'%{specification}%'))
+            query = apply_specification_partial_filter(query, specification)
 
         if region:
             query = query.filter(PriceRecord.region.like(f'%{region}%'))
@@ -1540,6 +2024,7 @@ def query_records():
             if source_file:
                 result['source_file_name'] = source_file.file_name
                 result['source_upload_time'] = source_file.upload_time.strftime('%Y-%m-%d %H:%M:%S') if source_file.upload_time else None
+                result['source_upload_user'] = get_upload_user_display(source_file.upload_user) or ''
                 result['source_department'] = source_file.department
                 result['source_engineer'] = source_file.engineer_name
             results.append(result)
@@ -1571,6 +2056,8 @@ def get_statistics():
             InquiryFile.department,
             db.func.count(InquiryFile.file_id).label('upload_count'),
             db.func.max(InquiryFile.upload_time).label('last_upload_time')
+        ).filter(
+            InquiryFile.parse_status == 'success'
         ).group_by(InquiryFile.department).all()
 
         # SQL聚合替代 Python .all() 分组，避免大数据量性能问题
@@ -1646,7 +2133,7 @@ def get_statistics():
             PriceRecord.quote_date
         ).distinct().count()
 
-        total_files = InquiryFile.query.count()
+        total_files = InquiryFile.query.filter_by(parse_status='success').count()
         total_references = db.session.query(db.func.sum(PriceRecord.reference_count)).scalar() or 0
 
         return jsonify({
@@ -1697,16 +2184,25 @@ def list_files():
     """
     try:
         page = max(1, int(request.args.get('page', 1)))
-        per_page = int(request.args.get('per_page', 20))
+        page_size_arg = request.args.get('page_size', request.args.get('pageSize', None))
+        per_page = int(page_size_arg) if page_size_arg else int(request.args.get('per_page', 20))
         per_page = min(max(per_page, 1), 100)
 
-        pagination = InquiryFile.query.order_by(InquiryFile.upload_time.desc()).paginate(
+        pagination = InquiryFile.query.filter(
+            InquiryFile.parse_status == 'success'
+        ).order_by(InquiryFile.upload_time.desc()).paginate(
             page=page, per_page=per_page, error_out=False
         )
 
+        file_rows = []
+        for item in pagination.items:
+            row = item.to_dict()
+            row['upload_user'] = get_upload_user_display(item.upload_user) or row.get('upload_user') or '未知'
+            file_rows.append(row)
+
         return jsonify({
             'success': True,
-            'data': [f.to_dict() for f in pagination.items],
+            'data': file_rows,
             'total': pagination.total,
             'page': page,
             'per_page': per_page,
@@ -1735,8 +2231,17 @@ def get_record_detail(record_id):
         if source_file:
             result['source_file_name'] = source_file.file_name
             result['source_upload_time'] = source_file.upload_time.strftime('%Y-%m-%d %H:%M:%S') if source_file.upload_time else None
+            result['source_upload_user'] = get_upload_user_display(source_file.upload_user) or ''
             result['source_department'] = source_file.department
             result['source_engineer'] = source_file.engineer_name
+
+        bound_user = None
+        if record.engineer_user_id:
+            bound_user = User.query.get(record.engineer_user_id)
+        if not bound_user:
+            bound_user = get_user_by_engineer_name(record.engineer_name)
+        result['engineer_contact_available'] = bool(bound_user)
+        result['engineer_phone_masked'] = mask_phone(bound_user.phone) if bound_user else ''
 
         return jsonify({
             'success': True,
@@ -1845,7 +2350,217 @@ def preview_file(file_id):
         return api_internal_error('preview_file', e)
 
 
+@app.route('/api/engineer/contact/<int:record_id>', methods=['GET'])
+@api_login_required
+def get_engineer_contact(record_id):
+    """获取工程师联系方式（默认脱敏，reveal=1 时返回完整号码）"""
+    try:
+        record = PriceRecord.query.get(record_id)
+        if not record:
+            return jsonify({'success': False, 'message': '记录不存在'}), 404
+
+        bound_user = None
+        if record.engineer_user_id:
+            bound_user = User.query.get(record.engineer_user_id)
+        if not bound_user:
+            bound_user = get_user_by_engineer_name(record.engineer_name)
+
+        if not bound_user:
+            return jsonify({
+                'success': True,
+                'data': {
+                    'engineer_name': record.engineer_name or '未知',
+                    'department': record.department or '未知',
+                    'is_bound': False,
+                    'phone_masked': '',
+                    'phone': ''
+                }
+            })
+
+        reveal = str(request.args.get('reveal', '')).lower() in {'1', 'true', 'yes'}
+        return jsonify({
+            'success': True,
+            'data': {
+                'engineer_name': bound_user.real_name or record.engineer_name or '未知',
+                'department': bound_user.department or record.department or '未知',
+                'is_bound': True,
+                'user_id': bound_user.id,
+                'phone_masked': mask_phone(bound_user.phone),
+                'phone': bound_user.phone if reveal else ''
+            }
+        })
+    except Exception as e:
+        return api_internal_error('get_engineer_contact', e)
+
+
+@app.route('/api/uploader/contact/<int:file_id>', methods=['GET'])
+@api_login_required
+def get_uploader_contact(file_id):
+    """获取上传人联系方式（默认脱敏，reveal=1 时返回完整号码）"""
+    try:
+        inquiry_file = InquiryFile.query.get(file_id)
+        if not inquiry_file:
+            return jsonify({'success': False, 'message': '文件不存在'}), 404
+
+        bound_user = get_user_by_upload_user(inquiry_file.upload_user)
+        if not bound_user:
+            return jsonify({
+                'success': True,
+                'data': {
+                    'file_id': inquiry_file.file_id,
+                    'file_name': inquiry_file.file_name or '-',
+                    'uploader_name': get_upload_user_display(inquiry_file.upload_user) or '未知',
+                    'department': inquiry_file.department or '未知',
+                    'inquiry_engineer': inquiry_file.engineer_name or '未知',
+                    'is_bound': False,
+                    'phone_masked': '',
+                    'phone': ''
+                }
+            })
+
+        reveal = str(request.args.get('reveal', '')).lower() in {'1', 'true', 'yes'}
+        return jsonify({
+            'success': True,
+            'data': {
+                'file_id': inquiry_file.file_id,
+                'file_name': inquiry_file.file_name or '-',
+                'uploader_name': bound_user.real_name or inquiry_file.upload_user or '未知',
+                'department': bound_user.department or inquiry_file.department or '未知',
+                'inquiry_engineer': inquiry_file.engineer_name or '未知',
+                'is_bound': True,
+                'user_id': bound_user.id,
+                'phone_masked': mask_phone(bound_user.phone),
+                'phone': bound_user.phone if reveal else ''
+            }
+        })
+    except Exception as e:
+        return api_internal_error('get_uploader_contact', e)
+
+
+@app.route('/api/engineer/query', methods=['POST'])
+@api_login_required
+def engineer_lookup_query():
+    """工程师查询（模板匹配，不接入AI）"""
+    try:
+        data = request.get_json() or {}
+        query_text = str(data.get('query', '')).strip()
+        if not query_text:
+            return jsonify({'success': False, 'message': '查询文本不能为空'}), 400
+
+        page = max(1, int(data.get('page', 1)))
+        page_size_arg = data.get('page_size', data.get('pageSize'))
+        per_page = int(page_size_arg) if page_size_arg else int(data.get('per_page', 20))
+        per_page = min(max(per_page, 1), 100)
+        max_scan = int(data.get('max_scan', 500))
+        max_scan = min(max(max_scan, 50), 2000)
+
+        parsed_params = enrich_parsed_params(query_text, parse_natural_language_query(query_text))
+        parsed_params['parsed_intent'] = 'engineer_lookup'
+        if not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region')):
+            return jsonify({'success': False, 'message': '请补充材料名称或规格后再查询负责人'}), 400
+
+        query = PriceRecord.query
+        if parsed_params.get('material_name'):
+            query = query.filter(PriceRecord.material_name.like(f"%{parsed_params['material_name']}%"))
+        if parsed_params.get('specification'):
+            query = query.filter(PriceRecord.specification.like(f"%{parsed_params['specification']}%"))
+        if parsed_params.get('region'):
+            query = query.filter(PriceRecord.region.like(f"%{parsed_params['region']}%"))
+
+        start_date = parsed_params.get('start_date')
+        end_date = parsed_params.get('end_date')
+        if start_date:
+            query = query.filter(PriceRecord.quote_date >= start_date)
+        if end_date:
+            query = query.filter(PriceRecord.quote_date <= end_date)
+        if not start_date and not end_date:
+            one_year_ago = datetime.now().date() - timedelta(days=365)
+            query = query.filter(PriceRecord.quote_date >= one_year_ago)
+
+        records = rank_records(query.limit(max_scan).all(), parsed_params)
+
+        engineer_map = {}
+        for record in records:
+            bound_user = None
+            if record.engineer_user_id:
+                bound_user = User.query.get(record.engineer_user_id)
+            if not bound_user:
+                bound_user = get_user_by_engineer_name(record.engineer_name)
+
+            key = (bound_user.id if bound_user else None) or (record.engineer_name or 'unknown')
+            if key not in engineer_map:
+                engineer_map[key] = {
+                    'engineer_name': (bound_user.real_name if bound_user else record.engineer_name) or '未知',
+                    'department': (bound_user.department if bound_user else record.department) or '未知',
+                    'is_bound': bool(bound_user),
+                    'engineer_user_id': bound_user.id if bound_user else None,
+                    'phone_masked': mask_phone(bound_user.phone) if bound_user else '',
+                    'material_count': 0,
+                    'latest_quote': record.quote_date.strftime('%Y-%m-%d') if record.quote_date else None,
+                }
+            engineer_map[key]['material_count'] += 1
+
+        result_list = sorted(engineer_map.values(), key=lambda x: x['material_count'], reverse=True)
+        total = len(result_list)
+        pages = (total + per_page - 1) // per_page if total > 0 else 1
+        start = (page - 1) * per_page
+        end = start + per_page
+        page_data = result_list[start:end] if start < total else []
+
+        return jsonify({
+            'success': True,
+            'data': page_data,
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'pages': pages,
+            'parsed_params': parsed_params
+        })
+    except Exception as e:
+        return api_internal_error('engineer_lookup_query', e)
+
+
 # ==================== 管理员接口 ====================
+
+@app.route('/api/admin/system-status', methods=['GET'])
+@admin_required
+def admin_system_status():
+    """系统状态诊断（用于排查 502/数据库异常）"""
+    try:
+        status = {
+            'server_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'database': {
+                'inquiry_file_ok': False,
+                'price_record_ok': False,
+                'user_ok': False,
+                'upload_audit_ok': False,
+            }
+        }
+        try:
+            InquiryFile.query.limit(1).all()
+            status['database']['inquiry_file_ok'] = True
+        except Exception:
+            pass
+        try:
+            PriceRecord.query.limit(1).all()
+            status['database']['price_record_ok'] = True
+        except Exception:
+            pass
+        try:
+            User.query.limit(1).all()
+            status['database']['user_ok'] = True
+        except Exception:
+            pass
+        try:
+            UploadAudit.query.limit(1).all()
+            status['database']['upload_audit_ok'] = True
+        except Exception:
+            pass
+        status['database']['all_ok'] = all(status['database'].values())
+        return jsonify({'success': True, 'data': status})
+    except Exception as e:
+        return api_internal_error('admin_system_status', e)
+
 
 @app.route('/api/admin/users', methods=['GET'])
 @admin_required
@@ -1868,6 +2583,7 @@ def admin_add_user():
     """添加用户"""
     try:
         data = request.get_json() or {}
+        username = data.get('username', '').strip()
         phone = data.get('phone', '').strip()
         real_name = data.get('real_name', '')
         department = data.get('department', '')
@@ -1875,9 +2591,16 @@ def admin_add_user():
         if role not in ALLOWED_USER_ROLES:
             return jsonify({'success': False, 'message': '角色参数非法'}), 400
 
+        if username and not re.fullmatch(r'[A-Za-z0-9_]{3,32}', username):
+            return jsonify({'success': False, 'message': '用户名需为3-32位字母数字下划线'}), 400
+
         # 验证手机号格式
         if not phone or len(phone) != 11 or not phone.startswith('1'):
             return jsonify({'success': False, 'message': '手机号格式不正确'}), 400
+
+        # 检查用户名是否已存在
+        if username and User.query.filter_by(username=username).first():
+            return jsonify({'success': False, 'message': '用户名已存在'}), 400
 
         # 检查手机号是否已存在
         existing = User.query.filter_by(phone=phone).first()
@@ -1886,6 +2609,7 @@ def admin_add_user():
 
         # 创建用户
         user = User(
+            username=username or None,
             phone=phone,
             real_name=real_name,
             department=department,
@@ -1896,6 +2620,8 @@ def admin_add_user():
         user.set_password(user.get_default_password())
 
         db.session.add(user)
+        db.session.flush()
+        auto_bind_engineer_for_user(user)
         db.session.commit()
 
         return jsonify({
@@ -1925,6 +2651,15 @@ def admin_update_user(user_id):
             return jsonify({'success': False, 'message': '不能禁用自己的账号'}), 400
 
         # 更新字段
+        if 'username' in data:
+            username = (data.get('username') or '').strip()
+            if username and not re.fullmatch(r'[A-Za-z0-9_]{3,32}', username):
+                return jsonify({'success': False, 'message': '用户名需为3-32位字母数字下划线'}), 400
+            if username:
+                exists = User.query.filter(User.username == username, User.id != user.id).first()
+                if exists:
+                    return jsonify({'success': False, 'message': '用户名已存在'}), 400
+            user.username = username or None
         if 'real_name' in data:
             user.real_name = data['real_name']
         if 'department' in data:
@@ -1936,6 +2671,7 @@ def admin_update_user(user_id):
         if 'is_active' in data:
             user.is_active = data['is_active']
 
+        auto_bind_engineer_for_user(user)
         db.session.commit()
 
         return jsonify({
@@ -1962,6 +2698,8 @@ def admin_delete_user(user_id):
         if user.id == current_user.id:
             return jsonify({'success': False, 'message': '不能删除自己的账号'}), 400
 
+        EngineerBinding.query.filter_by(user_id=user.id).delete()
+        PriceRecord.query.filter_by(engineer_user_id=user.id).update({'engineer_user_id': None})
         db.session.delete(user)
         db.session.commit()
 
@@ -2004,6 +2742,102 @@ def admin_reset_password(user_id):
         return api_internal_error('admin_reset_password', e)
 
 
+@app.route('/api/admin/engineer-bindings', methods=['GET'])
+@admin_required
+def admin_list_engineer_bindings():
+    """管理员查看工程师绑定列表"""
+    try:
+        bindings = EngineerBinding.query.order_by(EngineerBinding.updated_at.desc()).all()
+        user_map = {u.id: u for u in User.query.all()}
+        data = []
+        for item in bindings:
+            user = user_map.get(item.user_id)
+            row = item.to_dict()
+            row['user'] = user.to_dict() if user else None
+            data.append(row)
+        return jsonify({'success': True, 'data': data, 'total': len(data)})
+    except Exception as e:
+        return api_internal_error('admin_list_engineer_bindings', e)
+
+
+@app.route('/api/admin/engineer-bindings/pending', methods=['GET'])
+@admin_required
+def admin_list_pending_engineers():
+    """管理员查看待绑定工程师名"""
+    try:
+        rows = db.session.query(
+            PriceRecord.engineer_name,
+            PriceRecord.department,
+            db.func.count(PriceRecord.record_id).label('record_count'),
+            db.func.max(PriceRecord.quote_date).label('latest_quote')
+        ).filter(
+            PriceRecord.engineer_name != None,
+            PriceRecord.engineer_name != ''
+        ).group_by(
+            PriceRecord.engineer_name,
+            PriceRecord.department
+        ).order_by(
+            db.func.count(PriceRecord.record_id).desc()
+        ).all()
+
+        bound_norms = {item.engineer_name_norm for item in EngineerBinding.query.all()}
+        pending = []
+        for row in rows:
+            norm_name = normalize_engineer_key(row.engineer_name)
+            if not norm_name or norm_name in bound_norms:
+                continue
+            pending.append({
+                'engineer_name': row.engineer_name,
+                'department': row.department or '未知',
+                'record_count': row.record_count,
+                'latest_quote': row.latest_quote.strftime('%Y-%m-%d') if row.latest_quote else None
+            })
+
+        return jsonify({'success': True, 'data': pending, 'total': len(pending)})
+    except Exception as e:
+        return api_internal_error('admin_list_pending_engineers', e)
+
+
+@app.route('/api/admin/engineer-bindings', methods=['POST'])
+@admin_required
+def admin_bind_engineer_to_user():
+    """管理员手动绑定工程师名到用户"""
+    try:
+        data = request.get_json() or {}
+        user_id = int(data.get('user_id', 0))
+        engineer_name = normalize_engineer_name(data.get('engineer_name', ''))
+        if not user_id or not engineer_name:
+            return jsonify({'success': False, 'message': '参数不完整'}), 400
+
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'success': False, 'message': '用户不存在'}), 404
+
+        ensure_engineer_binding(user, engineer_name, bind_type='manual', confidence=1.0)
+        db.session.flush()
+
+        norm_name = normalize_engineer_key(engineer_name)
+        updated = 0
+        records = PriceRecord.query.filter(
+            PriceRecord.engineer_name != None,
+            PriceRecord.engineer_name != ''
+        ).all()
+        for record in records:
+            if normalize_engineer_key(record.engineer_name) == norm_name:
+                record.engineer_user_id = user.id
+                updated += 1
+
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': '绑定成功',
+            'updated_records': updated
+        })
+    except Exception as e:
+        db.session.rollback()
+        return api_internal_error('admin_bind_engineer_to_user', e)
+
+
 def init_db():
     """初始化数据库 - 创建所有数据库表"""
     with app.app_context():
@@ -2022,19 +2856,76 @@ def init_db():
 
 def ensure_schema_compatibility():
     """
-    轻量 schema 兼容修复（主要针对 SQLite 运行中的增量字段）。
+    轻量 schema 兼容修复（SQLite/MySQL 增量字段）。
     """
     try:
-        engine = db.engines.get('inquiry_file')
-        if not engine:
-            return
-        if engine.url.get_backend_name() != 'sqlite':
-            return
+        for bind_key, table_name, column_name, sqlite_ddl, mysql_ddl in [
+            (
+                'inquiry_file',
+                'inquiry_file',
+                'stored_file_name',
+                "ALTER TABLE inquiry_file ADD COLUMN stored_file_name VARCHAR(255)",
+                "ALTER TABLE inquiry_file ADD COLUMN stored_file_name VARCHAR(255)"
+            ),
+            (
+                'price_record',
+                'price_record',
+                'engineer_user_id',
+                "ALTER TABLE price_record ADD COLUMN engineer_user_id INTEGER",
+                "ALTER TABLE price_record ADD COLUMN engineer_user_id INT"
+            ),
+            (
+                'user',
+                'user',
+                'username',
+                "ALTER TABLE user ADD COLUMN username VARCHAR(64)",
+                "ALTER TABLE user ADD COLUMN username VARCHAR(64)"
+            ),
+        ]:
+            engine = db.engines.get(bind_key)
+            if not engine:
+                continue
+            backend = engine.url.get_backend_name()
+            with engine.begin() as conn:
+                if backend == 'sqlite':
+                    columns = [row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()]
+                else:
+                    columns = [row[0] for row in conn.exec_driver_sql(
+                        f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                        f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table_name}'"
+                    ).fetchall()]
+                if column_name not in columns:
+                    conn.exec_driver_sql(sqlite_ddl if backend == 'sqlite' else mysql_ddl)
 
-        with engine.begin() as conn:
-            columns = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(inquiry_file)").fetchall()]
-            if 'stored_file_name' not in columns:
-                conn.exec_driver_sql("ALTER TABLE inquiry_file ADD COLUMN stored_file_name VARCHAR(255)")
+        # 创建工程师绑定表（用户库）
+        user_engine = db.engines.get('user')
+        if user_engine:
+            EngineerBinding.__table__.create(bind=user_engine, checkfirst=True)
+
+        # 核心索引优化（材料、地区、时间、组合索引）
+        price_engine = db.engines.get('price_record')
+        if price_engine:
+            backend = price_engine.url.get_backend_name()
+            statements = [
+                "CREATE INDEX IF NOT EXISTS idx_price_material ON price_record(material_name)",
+                "CREATE INDEX IF NOT EXISTS idx_price_region ON price_record(region)",
+                "CREATE INDEX IF NOT EXISTS idx_price_quote_date ON price_record(quote_date)",
+                "CREATE INDEX IF NOT EXISTS idx_price_material_region_date ON price_record(material_name, region, quote_date)",
+            ]
+            if backend == 'mysql':
+                statements = [
+                    "CREATE INDEX idx_price_material ON price_record(material_name)",
+                    "CREATE INDEX idx_price_region ON price_record(region)",
+                    "CREATE INDEX idx_price_quote_date ON price_record(quote_date)",
+                    "CREATE INDEX idx_price_material_region_date ON price_record(material_name, region, quote_date)",
+                ]
+            with price_engine.begin() as conn:
+                for stmt in statements:
+                    try:
+                        conn.exec_driver_sql(stmt)
+                    except Exception:
+                        # 索引已存在时忽略
+                        pass
     except Exception as exc:
         print(f"[SCHEMA] ensure_schema_compatibility failed: {exc}", flush=True)
 
@@ -2055,6 +2946,7 @@ def create_initial_admin():
 
             # 创建默认管理员
             admin = User(
+                username='admin',
                 phone=admin_phone,
                 real_name='系统管理员',
                 department='系统管理部',
@@ -2074,15 +2966,17 @@ def create_initial_admin():
 
 
 def startup_init():
-    """应用启动初始化（python app.py 和 gunicorn 均会执行）"""
+    """应用启动初始化（开发模式+gunicorn 都执行）。"""
     db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'database')
     if not os.path.exists(db_path):
         os.makedirs(db_path)
-
-    init_db()
-
-    with app.app_context():
-        init_nlp_parser()
+    try:
+        init_db()
+        with app.app_context():
+            init_nlp_parser()
+    except Exception as exc:
+        # 防止初始化异常导致进程退出（避免 Nginx 502）
+        print(f"[STARTUP] init failed, keep process alive for retry: {exc}", flush=True)
 
 
 startup_init()
@@ -2095,3 +2989,26 @@ if __name__ == '__main__':
     print(f"访问地址: http://localhost:{port}")
     print("=" * 60)
     app.run(debug=False, host='0.0.0.0', port=port)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

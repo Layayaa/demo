@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -584,6 +584,11 @@
                                 <i class="fas fa-users me-2"></i>用户管理
                             </a>
                         </li>
+                        <li id="adminBindingMenu" class="d-none">
+                            <a class="dropdown-item" href="#" id="showEngineerBinding">
+                                <i class="fas fa-link me-2"></i>工程师关联
+                            </a>
+                        </li>
                         <li id="adminDivider" class="d-none"><hr class="dropdown-divider"></li>
                         <li><hr class="dropdown-divider"></li>
                         <li><a class="dropdown-item text-danger" href="#" id="logoutBtn">
@@ -646,6 +651,7 @@
                         <table class="table table-hover">
                             <thead>
                                 <tr>
+                                    <th>用户名</th>
                                     <th>手机号</th>
                                     <th>姓名</th>
                                     <th>部门</th>
@@ -655,7 +661,7 @@
                                 </tr>
                             </thead>
                             <tbody id="userTableBody">
-                                <tr><td colspan="6" class="text-center">加载中...</td></tr>
+                                <tr><td colspan="7" class="text-center">加载中...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -675,6 +681,10 @@
                 <div class="modal-body">
                     <form id="userForm">
                         <input type="hidden" id="editUserId">
+                        <div class="mb-3">
+                            <label class="form-label">用户名 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="userUsername" maxlength="32" required placeholder="3-32位字母数字下划线">
+                        </div>
                         <div class="mb-3">
                             <label class="form-label">手机号 <span class="text-danger">*</span></label>
                             <input type="tel" class="form-control" id="userPhone" maxlength="11" required>
@@ -748,8 +758,13 @@
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="topUserManagement" type="button">
+                    <button class="nav-link" id="topUserManagement" type="button" style="display:none;">
                         <i class="fas fa-users me-2"></i>用户管理
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="topEngineerBinding" type="button" style="display:none;">
+                        <i class="fas fa-link me-2"></i>工程师关联
                     </button>
                 </li>
             </ul>
@@ -837,6 +852,7 @@
                             <p class="mt-2">正在查询，请稍候...</p>
                         </div>
                         <div id="filterResult" class="mt-4"></div>
+                        <div id="filterPagination" class="mt-3"></div>
                     </div>
                 </div>
             </div>
@@ -852,8 +868,8 @@
                             <div class="card-body">
                                 <form id="uploadForm">
                                     <div class="mb-3">
-                                        <label class="form-label">填报部门 <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control form-control-sm" name="department" required placeholder="例如：采购部">
+                                        <label class="form-label">填报部门</label>
+                                        <div class="form-control form-control-sm bg-light text-muted">自动使用当前上传账号的部门信息</div>
                                     </div>
                                     <div class="mb-3">
                                         <label class="form-label">报价有效期</label>
@@ -997,6 +1013,58 @@
         </div>
     </div>
 
+    <!-- 联系工程师模态框 -->
+    <div class="modal fade" id="contactEngineerModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-phone-alt me-2"></i>联系工程师</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="contactEngineerBody">
+                    <div class="text-muted">加载中...</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 工程师绑定管理模态框 -->
+    <div class="modal fade" id="engineerBindingModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-link me-2"></i>工程师关联管理</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex gap-2 mb-3">
+                        <button class="btn btn-sm btn-outline-primary" id="refreshBindingBtn">刷新待关联列表</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>工程师名字</th>
+                                    <th>部门</th>
+                                    <th>记录数</th>
+                                    <th>最近报价</th>
+                                    <th style="min-width: 240px;">绑定到用户</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bindingTableBody">
+                                <tr><td colspan="6" class="text-center text-muted">加载中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/js/all.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
@@ -1080,6 +1148,12 @@
             return response;
         };
 
+        const filterState = {
+            page: 1,
+            perPage: 20,
+            lastParams: null
+        };
+
         // 文件上传处理
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
@@ -1130,10 +1204,9 @@
             }
 
             formData.append('file', fileInput.files[0]);
-            if (!formData.get('upload_user')) {
-                const uploader = (currentUser && (currentUser.real_name || currentUser.phone)) || '系统用户';
-                formData.set('upload_user', uploader);
-            }
+            const uploader = (currentUser && (currentUser.real_name || currentUser.username || currentUser.phone)) || '系统用户';
+            formData.set('upload_user', uploader);
+            formData.set('department', (currentUser && currentUser.department) || '');
 
             document.getElementById('uploadLoading').style.display = 'block';
             document.getElementById('uploadResult').style.display = 'none';
@@ -1345,7 +1418,7 @@
                 }
                 chatMessages = parsed;
                 chatHistoryEl.innerHTML = '';
-                chatMessages.forEach((item) => appendChatBubble(item.role, item.content, false, false));
+                chatMessages.forEach((item) => appendChatBubble(item.role, item.content, !!item.isHtml, false));
             } catch (error) {
                 resetChat();
             }
@@ -1356,32 +1429,119 @@
                 return `<div class="text-danger">查询失败：${escapeHtml(result?.message || '未知错误')}</div>`;
             }
 
-            const rows = (result.data || []).slice(0, 5);
-            if (rows.length === 0) {
+            if (result.uploader_mode) {
+                const rows = result.data || [];
+                const inheritedTip = result?.parsed_params?.context_inherited
+                    ? '<div class="small text-primary mb-2">已基于上一轮询价结果定位“这份报价”。</div>'
+                    : '';
+                if (!rows.length) {
+                    return `${inheritedTip}<div>未找到上传人信息，请补充材料名、规格或文件关键词后重试。</div>`;
+                }
+
+                const tableRows = rows.map((r) => {
+                    const contactBtn = Number.isFinite(Number(r.file_id))
+                        ? `<button class="btn btn-sm btn-outline-success" onclick="showUploaderContact(${Number(r.file_id)})"><i class="fas fa-phone-alt me-1"></i>联系上传人</button>`
+                        : '<button class="btn btn-sm btn-outline-secondary" disabled>无法联系</button>';
+                    return `
+                        <tr>
+                            <td>${escapeHtml(r.upload_user || '-')}</td>
+                            <td>${escapeHtml(r.engineer_name || '-')}</td>
+                            <td>${escapeHtml(r.department || '-')}</td>
+                            <td>${escapeHtml(r.phone_masked || '未关联')}</td>
+                            <td>${escapeHtml(String(r.record_count || 0))}</td>
+                            <td>${contactBtn}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                return `
+                    ${inheritedTip}<div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 条记录：</div>
+                    <div class="table-responsive" style="max-height: 460px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+                        <table class="table table-sm mb-0 table-hover">
+                            <thead style="position: sticky; top: 0; background: #eef4ff; z-index: 1;">
+                                <tr>
+                                    <th>上传人</th>
+                                    <th>询价工程师</th>
+                                    <th>部门</th>
+                                    <th>联系方式</th>
+                                    <th>关联记录数</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>${tableRows}</tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
+            if (result.engineer_mode) {
+                const rows = result.data || [];
+                if (!rows.length) {
+                    return '<div>未找到负责人信息，请补充材料名称后重试。</div>';
+                }
+                const tableRows = rows.map((r) => `
+                    <tr>
+                        <td>${escapeHtml(r.engineer_name || '-')}</td>
+                        <td>${escapeHtml(r.department || '-')}</td>
+                        <td>${escapeHtml(r.phone_masked || '未关联')}</td>
+                        <td>${escapeHtml(String(r.material_count || 0))}</td>
+                    </tr>
+                `).join('');
+                return `
+                    <div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 位工程师：</div>
+                    <div class="table-responsive" style="max-height: 460px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+                        <table class="table table-sm mb-0 table-hover">
+                            <thead style="position: sticky; top: 0; background: #eef4ff; z-index: 1;">
+                                <tr>
+                                    <th>工程师</th>
+                                    <th>部门</th>
+                                    <th>联系方式</th>
+                                    <th>关联记录数</th>
+                                </tr>
+                            </thead>
+                            <tbody>${tableRows}</tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
+            const rows = result.data || [];
+            if (!rows.length) {
                 return '<div>未找到符合条件的询价记录。</div>';
             }
 
-            const tableRows = rows.map((r) => `
-                <tr>
-                    <td>${escapeHtml(r.material_name || '-')}</td>
-                    <td>${escapeHtml(r.specification || '-')}</td>
-                    <td>${escapeHtml(r.price ? `${r.price}元` : '-')}</td>
-                    <td>${escapeHtml(r.region || '-')}</td>
-                    <td>${escapeHtml(r.quote_date || '-')}</td>
-                </tr>
-            `).join('');
+            const tableRows = rows.map((r) => {
+                const detailBtn = Number.isFinite(Number(r.record_id))
+                    ? `<button class="btn btn-sm btn-outline-primary" onclick="showDetail(${Number(r.record_id)})" title="查看详情"><i class="fas fa-eye"></i></button>`
+                    : '<button class="btn btn-sm btn-outline-secondary" disabled title="无详情"><i class="fas fa-eye"></i></button>';
+                return `
+                    <tr>
+                        <td>${escapeHtml(r.material_name || '-')}</td>
+                        <td>${escapeHtml(r.specification || '-')}</td>
+                        <td>${escapeHtml(r.price ? `${r.price}元` : '-')}</td>
+                        <td>${escapeHtml(r.region || '-')}</td>
+                        <td>${escapeHtml(r.quote_date || '-')}</td>
+                        <td>${escapeHtml(r.source_upload_user || '-')}</td>
+                        <td>${escapeHtml(r.source_engineer || r.engineer_name || '-')}</td>
+                        <td>${detailBtn}</td>
+                    </tr>
+                `;
+            }).join('');
 
             return `
-                <div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 条，以下展示前 ${h(rows.length)} 条：</div>
-                <div class="table-responsive">
-                    <table class="table table-sm mb-0">
-                        <thead>
+                <div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 条记录：</div>
+                <div class="table-responsive" style="max-height: 460px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+                    <table class="table table-sm mb-0 table-hover">
+                        <thead style="position: sticky; top: 0; background: #eef4ff; z-index: 1;">
                             <tr>
                                 <th>材料</th>
                                 <th>规格</th>
                                 <th>单价</th>
                                 <th>地区</th>
                                 <th>报价时间</th>
+                                <th>上传人</th>
+                                <th>询价工程师</th>
+                                <th>详情</th>
                             </tr>
                         </thead>
                         <tbody>${tableRows}</tbody>
@@ -1403,7 +1563,7 @@
                 const response = await fetch(`${API_BASE}/natural_query`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: queryText })
+                    body: JSON.stringify({ query: queryText, page_size: 5000, max_scan: 5000 })
                 });
                 const result = await response.json();
                 appendChatBubble('assistant', buildChatResultHtml(result), true, true);
@@ -1424,114 +1584,165 @@
         newChatBtnEl.addEventListener('click', resetChat);
         restoreChat();
 
-        // 查询表单处理
-        document.getElementById('queryForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-
-            const formData = new FormData(e.target);
+        function buildFilterParamsFromForm(formEl) {
+            const formData = new FormData(formEl);
             const params = new URLSearchParams();
-            const filterLoadingEl = document.getElementById('filterLoading');
-            const filterResultEl = document.getElementById('filterResult');
-
             for (let [key, value] of formData.entries()) {
                 if (value) params.append(key, value);
             }
-
-            // 处理时间范围
             const timeRange = formData.get('time_range');
             if (timeRange !== 'custom' && timeRange !== 'all') {
                 params.delete('start_date');
                 params.delete('end_date');
             }
+            return params;
+        }
+
+        function renderFilterPagination(currentPage, pages) {
+            const container = document.getElementById('filterPagination');
+            if (!pages || pages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+            let html = '<nav><ul class="pagination pagination-sm justify-content-center">';
+            const prevDisabled = currentPage <= 1 ? 'disabled' : '';
+            html += `<li class="page-item ${prevDisabled}"><a class="page-link" href="#" data-page="${currentPage - 1}">上一页</a></li>`;
+            const start = Math.max(1, currentPage - 2);
+            const end = Math.min(pages, currentPage + 2);
+            for (let p = start; p <= end; p++) {
+                const active = p === currentPage ? 'active' : '';
+                html += `<li class="page-item ${active}"><a class="page-link" href="#" data-page="${p}">${p}</a></li>`;
+            }
+            const nextDisabled = currentPage >= pages ? 'disabled' : '';
+            html += `<li class="page-item ${nextDisabled}"><a class="page-link" href="#" data-page="${currentPage + 1}">下一页</a></li>`;
+            html += '</ul></nav>';
+            container.innerHTML = html;
+        }
+
+        async function runFilterQuery(page = 1) {
+            const filterLoadingEl = document.getElementById('filterLoading');
+            const filterResultEl = document.getElementById('filterResult');
+            const filterPaginationEl = document.getElementById('filterPagination');
+            if (!filterState.lastParams) {
+                filterResultEl.innerHTML = showAlert('请先提交筛选条件', 'warning');
+                return;
+            }
 
             filterLoadingEl.style.display = 'block';
             filterResultEl.innerHTML = '';
-
+            filterPaginationEl.innerHTML = '';
             try {
+                const params = new URLSearchParams(filterState.lastParams.toString());
+                params.set('page', String(page));
+                params.set('page_size', String(filterState.perPage));
                 const response = await fetch(`${API_BASE}/query?${params.toString()}`);
                 const result = await response.json();
-
                 filterLoadingEl.style.display = 'none';
 
-                if (result.success) {
-                    if (result.data.length === 0) {
-                        filterResultEl.innerHTML = `
-                            <div class="empty-state">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.029.707V19a2 2 0 01-2 2z" />
-                                </svg>
-                                <p>未找到符合条件的询价记录</p>
-                            </div>
-                        `;
-                    } else {
-                        filterResultEl.innerHTML = `
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <span class="text-muted">共找到 <strong>${h(result.total)}</strong> 条记录</span>
-                                <span class="text-muted">第 ${h(result.page)} / ${h(result.pages)} 页</span>
-                            </div>
-                            <div class="table-responsive" style="max-height: 500px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
-                                <table class="table table-hover table-striped mb-0">
-                                    <thead style="position: sticky; top: 0; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); z-index: 10;">
-                                        <tr>
-                                            <th>材料名称</th>
-                                            <th>规格型号</th>
-                                            <th>单价</th>
-                                            <th>地区</th>
-                                            <th>报价时间</th>
-                                            <th>有效期</th>
-                                            <th>供应商</th>
-                                            <th>来源文件</th>
-                                            <th>上传时间</th>
-                                            <th>操作</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${result.data.map(r => {
-                                            // 有效期状态样式
-                                            let validity_badge = '';
-                                            let row_class = '';
-                                            if (r.validity_status === 'expired') {
-                                                validity_badge = '<span class="badge bg-warning text-dark">已过期</span>';
-                                                row_class = 'table-warning';
-                                            } else if (r.validity_status === 'expiring_soon') {
-                                                validity_badge = '<span class="badge bg-warning text-dark">即将过期</span>';
-                                            } else if (r.validity_status === 'valid') {
-                                                validity_badge = '<span class="badge bg-success">有效</span>';
-                                            } else {
-                                                validity_badge = '<span class="badge bg-secondary">未知</span>';
-                                            }
-
-                                            return `
-                                                <tr class="${row_class}">
-                                                    <td><strong>${h(r.material_name)}</strong></td>
-                                                    <td>${h(r.specification || '-')}</td>
-                                                    <td>${h(r.price ? r.price + '元' : '-')}</td>
-                                                    <td>${h(r.region || '-')}</td>
-                                                    <td>${h(r.quote_date || '-')}</td>
-                                                    <td>${validity_badge}</td>
-                                                    <td>${h(r.supplier || '-')}</td>
-                                                    <td><small>${h(r.source_file_name || '-')}</small></td>
-                                                    <td><small>${h(r.source_upload_time || '-')}</small></td>
-                                                    <td>
-                                                        <button class="btn btn-sm btn-outline-primary" onclick="showDetail(${Number(r.record_id)})">
-                                                            <i class="fas fa-eye me-1"></i>详情
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            `;
-                                        }).join('')}
-                                    </tbody>
-                                </table>
-                            </div>
-                        `;
-                    }
-                } else {
+                if (!result.success) {
                     filterResultEl.innerHTML = showAlert(result.message, 'danger');
+                    return;
                 }
+
+                filterState.page = result.page || page;
+                if (!result.data || result.data.length === 0) {
+                    filterResultEl.innerHTML = `
+                        <div class="empty-state">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.029.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <p>未找到符合条件的询价记录</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                filterResultEl.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <span class="text-muted">共找到 <strong>${h(result.total)}</strong> 条记录</span>
+                        <span class="text-muted">第 ${h(result.page)} / ${h(result.pages)} 页</span>
+                    </div>
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+                        <table class="table table-hover table-striped mb-0">
+                            <thead style="position: sticky; top: 0; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); z-index: 10;">
+                                <tr>
+                                    <th>材料名称</th>
+                                    <th>规格型号</th>
+                                    <th>单价</th>
+                                    <th>地区</th>
+                                    <th>报价时间</th>
+                                    <th>有效期</th>
+                                    <th>供应商</th>
+                                    <th>上传人</th>
+                                    <th>询价工程师</th>
+                                    <th>上传时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${result.data.map(r => {
+                                    let validity_badge = '';
+                                    let row_class = '';
+                                    if (r.validity_status === 'expired') {
+                                        validity_badge = '<span class="badge bg-warning text-dark">已过期</span>';
+                                        row_class = 'table-warning';
+                                    } else if (r.validity_status === 'expiring_soon') {
+                                        validity_badge = '<span class="badge bg-warning text-dark">即将过期</span>';
+                                    } else if (r.validity_status === 'valid') {
+                                        validity_badge = '<span class="badge bg-success">有效</span>';
+                                    } else {
+                                        validity_badge = '<span class="badge bg-secondary">未知</span>';
+                                    }
+                                    return `
+                                        <tr class="${row_class}">
+                                            <td><strong>${h(r.material_name)}</strong></td>
+                                            <td>${h(r.specification || '-')}</td>
+                                            <td>${h(r.price ? r.price + '元' : '-')}</td>
+                                            <td>${h(r.region || '-')}</td>
+                                            <td>${h(r.quote_date || '-')}</td>
+                                            <td>${validity_badge}</td>
+                                            <td>${h(r.supplier || '-')}</td>
+                                            <td><small>${h(r.source_upload_user || '-')}</small></td>
+                                            <td><small>${h(r.source_engineer || r.engineer_name || '-')}</small></td>
+                                            <td><small>${h(r.source_upload_time || '-')}</small></td>
+                                            <td class="d-flex gap-1">
+                                                <button class="btn btn-sm btn-outline-primary" onclick="showDetail(${Number(r.record_id)})"><i class="fas fa-eye"></i></button>
+                                                <button class="btn btn-sm btn-outline-success" onclick="showEngineerContact(${Number(r.record_id)})"><i class="fas fa-phone-alt"></i></button>
+                                            </td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+
+                renderFilterPagination(result.page, result.pages);
             } catch (error) {
                 filterLoadingEl.style.display = 'none';
                 filterResultEl.innerHTML = showAlert(`查询失败: ${error.message}`, 'danger');
             }
+        }
+
+        document.getElementById('queryForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            filterState.lastParams = buildFilterParamsFromForm(e.target);
+            filterState.page = 1;
+            await runFilterQuery(1);
+        });
+
+        document.getElementById('filterPagination').addEventListener('click', async (e) => {
+            const target = e.target.closest('a[data-page]');
+            if (!target) return;
+            e.preventDefault();
+            const nextPage = Number(target.dataset.page);
+            if (!nextPage || nextPage < 1) return;
+            await runFilterQuery(nextPage);
+        });
+        document.getElementById('queryForm').addEventListener('reset', () => {
+            filterState.lastParams = null;
+            document.getElementById('filterResult').innerHTML = '';
+            document.getElementById('filterPagination').innerHTML = '';
         });
 
         // 时间范围选择处理
@@ -1622,6 +1833,10 @@
                                     <td>${h(r.source_upload_time || '-')}</td>
                                 </tr>
                                 <tr>
+                                    <th>上传人</th>
+                                    <td>${h(r.source_upload_user || '-')}</td>
+                                </tr>
+                                <tr>
                                     <th>填报部门</th>
                                     <td>${h(r.department || '-')}</td>
                                 </tr>
@@ -1639,6 +1854,147 @@
                 alert('获取详情失败: ' + error.message);
             }
         }
+
+        async function showEngineerContact(recordId) {
+            const modalEl = document.getElementById('contactEngineerModal');
+            const titleEl = modalEl.querySelector('.modal-title');
+            const bodyEl = document.getElementById('contactEngineerBody');
+            if (titleEl) {
+                titleEl.innerHTML = '<i class="fas fa-phone-alt me-2"></i>联系工程师';
+            }
+            bodyEl.innerHTML = '<div class="text-muted">加载中...</div>';
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+
+            try {
+                const resp = await fetch(`${API_BASE}/engineer/contact/${recordId}`);
+                const result = await resp.json();
+                if (!result.success) {
+                    bodyEl.innerHTML = showAlert(result.message || '获取联系方式失败', 'danger');
+                    return;
+                }
+                const data = result.data || {};
+                if (!data.is_bound) {
+                    bodyEl.innerHTML = `
+                        <div class="alert alert-warning mb-0">
+                            <strong>${h(data.engineer_name || '未知工程师')}</strong> 尚未关联账号，暂无联系方式。
+                        </div>
+                    `;
+                    return;
+                }
+
+                bodyEl.innerHTML = `
+                    <table class="table table-sm">
+                        <tr><th>工程师</th><td>${h(data.engineer_name || '-')}</td></tr>
+                        <tr><th>部门</th><td>${h(data.department || '-')}</td></tr>
+                        <tr><th>手机号</th><td id="maskedPhoneCell">${h(data.phone_masked || '-')}</td></tr>
+                    </table>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-success" id="callEngineerBtn"><i class="fas fa-phone-alt me-1"></i>一键拨打</button>
+                        <button class="btn btn-sm btn-primary" id="smsEngineerBtn"><i class="fas fa-sms me-1"></i>发送短信</button>
+                    </div>
+                    <p class="text-muted small mt-2 mb-0">默认仅展示脱敏号码，拨打/短信时才请求完整号码。</p>
+                `;
+
+                async function revealPhoneAndJump(action) {
+                    const revealResp = await fetch(`${API_BASE}/engineer/contact/${recordId}?reveal=1`);
+                    const revealData = await revealResp.json();
+                    if (!revealData.success || !revealData.data || !revealData.data.phone) {
+                        alert('获取完整号码失败');
+                        return;
+                    }
+                    const phone = String(revealData.data.phone).trim();
+                    if (!/^1\d{10}$/.test(phone)) {
+                        alert('号码格式无效');
+                        return;
+                    }
+                    document.getElementById('maskedPhoneCell').textContent = revealData.data.phone_masked || '';
+                    if (action === 'call') {
+                        window.location.href = `tel:${phone}`;
+                    } else {
+                        window.location.href = `sms:${phone}`;
+                    }
+                }
+
+                document.getElementById('callEngineerBtn').addEventListener('click', () => revealPhoneAndJump('call'));
+                document.getElementById('smsEngineerBtn').addEventListener('click', () => revealPhoneAndJump('sms'));
+            } catch (error) {
+                bodyEl.innerHTML = showAlert(`获取联系方式失败: ${error.message}`, 'danger');
+            }
+        }
+
+        async function showUploaderContact(fileId) {
+            const modalEl = document.getElementById('contactEngineerModal');
+            const titleEl = modalEl.querySelector('.modal-title');
+            const bodyEl = document.getElementById('contactEngineerBody');
+            if (titleEl) {
+                titleEl.innerHTML = '<i class="fas fa-phone-alt me-2"></i>联系上传人';
+            }
+            bodyEl.innerHTML = '<div class="text-muted">加载中...</div>';
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+
+            try {
+                const resp = await fetch(`${API_BASE}/uploader/contact/${fileId}`);
+                const result = await resp.json();
+                if (!result.success) {
+                    bodyEl.innerHTML = showAlert(result.message || '获取联系方式失败', 'danger');
+                    return;
+                }
+                const data = result.data || {};
+                if (!data.is_bound) {
+                    bodyEl.innerHTML = `
+                        <div class="alert alert-warning mb-0">
+                            <strong>${h(data.uploader_name || '未知上传人')}</strong> 尚未关联账号，暂无联系方式。
+                        </div>
+                    `;
+                    return;
+                }
+
+                bodyEl.innerHTML = `
+                    <table class="table table-sm">
+                        <tr><th>上传人</th><td>${h(data.uploader_name || '-')}</td></tr>
+                        <tr><th>询价工程师</th><td>${h(data.inquiry_engineer || '-')}</td></tr>
+                        <tr><th>文件名</th><td>${h(data.file_name || '-')}</td></tr>
+                        <tr><th>部门</th><td>${h(data.department || '-')}</td></tr>
+                        <tr><th>手机号</th><td id="maskedUploaderPhoneCell">${h(data.phone_masked || '-')}</td></tr>
+                    </table>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-success" id="callUploaderBtn"><i class="fas fa-phone-alt me-1"></i>一键拨打</button>
+                        <button class="btn btn-sm btn-primary" id="smsUploaderBtn"><i class="fas fa-sms me-1"></i>发送短信</button>
+                    </div>
+                    <p class="text-muted small mt-2 mb-0">默认仅展示脱敏号码，拨打/短信时才请求完整号码。</p>
+                `;
+
+                async function revealPhoneAndJump(action) {
+                    const revealResp = await fetch(`${API_BASE}/uploader/contact/${fileId}?reveal=1`);
+                    const revealData = await revealResp.json();
+                    if (!revealData.success || !revealData.data || !revealData.data.phone) {
+                        alert('获取完整号码失败');
+                        return;
+                    }
+                    const phone = String(revealData.data.phone).trim();
+                    if (!/^1\d{10}$/.test(phone)) {
+                        alert('号码格式无效');
+                        return;
+                    }
+                    document.getElementById('maskedUploaderPhoneCell').textContent = revealData.data.phone_masked || '';
+                    if (action === 'call') {
+                        window.location.href = `tel:${phone}`;
+                    } else {
+                        window.location.href = `sms:${phone}`;
+                    }
+                }
+
+                document.getElementById('callUploaderBtn').addEventListener('click', () => revealPhoneAndJump('call'));
+                document.getElementById('smsUploaderBtn').addEventListener('click', () => revealPhoneAndJump('sms'));
+            } catch (error) {
+                bodyEl.innerHTML = showAlert(`获取联系方式失败: ${error.message}`, 'danger');
+            }
+        }
+
+        window.showEngineerContact = showEngineerContact;
+        window.showUploaderContact = showUploaderContact;
 
         // 加载统计数据
         async function loadStats() {
@@ -1719,7 +2075,7 @@
                             <table class="table table-sm">
                                 <thead>
                                     <tr>
-                                        <th>工程师</th>
+                                        <th>上传人</th>
                                         <th>部门</th>
                                         <th>上传次数</th>
                                         <th>最近上传</th>
@@ -1758,7 +2114,7 @@
                                     <tr>
                                         <th>文件名</th>
                                         <th>部门</th>
-                                        <th>工程师</th>
+                                        <th>上传人</th>
                                         <th>记录数</th>
                                         <th>上传时间</th>
                                         <th>状态</th>
@@ -1770,7 +2126,7 @@
                                         <tr>
                                             <td><strong>${h(f.file_name)}</strong></td>
                                             <td>${h(f.department || '-')}</td>
-                                            <td>${h(f.engineer_name || '-')}</td>
+                                            <td>${h(f.upload_user || '-')}</td>
                                             <td><span class="badge badge-custom badge-secondary">${h(f.record_count)}</span></td>
                                             <td><small>${h(f.upload_time)}</small></td>
                                             <td><span class="badge badge-custom ${f.parse_status === 'success' ? 'badge-success' : 'badge-warning'}">${h(f.parse_status)}</span></td>
@@ -1908,7 +2264,10 @@
             const userName = document.getElementById('userName');
             const userInitial = document.getElementById('userInitial');
             const adminMenu = document.getElementById('adminMenu');
+            const adminBindingMenu = document.getElementById('adminBindingMenu');
             const adminDivider = document.getElementById('adminDivider');
+            const topUserManagement = document.getElementById('topUserManagement');
+            const topEngineerBinding = document.getElementById('topEngineerBinding');
 
             // 显示用户名
             userName.textContent = user.real_name || user.phone;
@@ -1923,7 +2282,13 @@
             // 管理员显示管理菜单
             if (user.role === 'admin') {
                 adminMenu.classList.remove('d-none');
+                adminBindingMenu.classList.remove('d-none');
                 adminDivider.classList.remove('d-none');
+                topUserManagement.style.display = 'inline-block';
+                topEngineerBinding.style.display = 'inline-block';
+            } else {
+                topUserManagement.style.display = 'none';
+                topEngineerBinding.style.display = 'none';
             }
         }
 
@@ -1933,6 +2298,12 @@
             try {
                 await fetch('/api/logout', { method: 'POST' });
                 localStorage.removeItem(CSRF_STORAGE_KEY);
+                // 退出后清空智能对话，重新登录自动刷新对话上下文
+                Object.keys(localStorage).forEach((k) => {
+                    if (k.startsWith('inquiry_chat_messages_v1')) {
+                        localStorage.removeItem(k);
+                    }
+                });
                 window.location.href = '/login';
             } catch (error) {
                 console.error('退出登录失败:', error);
@@ -1984,6 +2355,86 @@
             new bootstrap.Modal(document.getElementById('userManagementModal')).show();
         }
 
+        async function loadPendingEngineerBindings() {
+            const tbody = document.getElementById('bindingTableBody');
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">加载中...</td></tr>';
+            try {
+                const [pendingResp, usersResp] = await Promise.all([
+                    fetch('/api/admin/engineer-bindings/pending'),
+                    fetch('/api/admin/users')
+                ]);
+                const pendingData = await pendingResp.json();
+                const usersData = await usersResp.json();
+                if (!pendingData.success || !usersData.success) {
+                    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">${h(pendingData.message || usersData.message || '加载失败')}</td></tr>`;
+                    return;
+                }
+
+                const userOptions = usersData.data.map(u => (
+                    `<option value="${Number(u.id)}">${h((u.real_name || u.username || u.phone) + ' / ' + (u.phone || '-'))}</option>`
+                )).join('');
+
+                if (!pendingData.data.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-success">暂无待关联数据</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = pendingData.data.map((row, idx) => `
+                    <tr>
+                        <td>${h(row.engineer_name)}</td>
+                        <td>${h(row.department || '-')}</td>
+                        <td>${h(row.record_count || 0)}</td>
+                        <td>${h(row.latest_quote || '-')}</td>
+                        <td>
+                            <select class="form-select form-select-sm" id="bindUserSelect_${idx}">
+                                <option value="">请选择用户</option>
+                                ${userOptions}
+                            </select>
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="bindEngineerName(decodeURIComponent('${encodeURIComponent(String(row.engineer_name || ''))}'), 'bindUserSelect_${idx}')">绑定</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">加载失败: ${h(error.message)}</td></tr>`;
+            }
+        }
+
+        async function openEngineerBindingManagement() {
+            if (!currentUser || currentUser.role !== 'admin') {
+                alert('仅管理员可使用工程师关联管理');
+                return;
+            }
+            await loadPendingEngineerBindings();
+            new bootstrap.Modal(document.getElementById('engineerBindingModal')).show();
+        }
+
+        window.bindEngineerName = async function(engineerName, selectId) {
+            const select = document.getElementById(selectId);
+            const userId = select ? Number(select.value) : 0;
+            if (!userId) {
+                alert('请先选择要绑定的用户');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/admin/engineer-bindings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ engineer_name: engineerName, user_id: userId })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    alert(data.message || '绑定失败');
+                    return;
+                }
+                alert(`绑定成功，已更新 ${data.updated_records || 0} 条记录`);
+                await loadPendingEngineerBindings();
+            } catch (error) {
+                alert('绑定失败: ' + error.message);
+            }
+        };
+
         // 用户管理
         document.getElementById('showUserManagement').addEventListener('click', (e) => {
             e.preventDefault();
@@ -1991,6 +2442,16 @@
         });
         document.getElementById('topUserManagement').addEventListener('click', () => {
             openUserManagement();
+        });
+        document.getElementById('showEngineerBinding').addEventListener('click', (e) => {
+            e.preventDefault();
+            openEngineerBindingManagement();
+        });
+        document.getElementById('topEngineerBinding').addEventListener('click', () => {
+            openEngineerBindingManagement();
+        });
+        document.getElementById('refreshBindingBtn').addEventListener('click', () => {
+            loadPendingEngineerBindings();
         });
 
         async function loadUsers() {
@@ -2012,6 +2473,7 @@
             const tbody = document.getElementById('userTableBody');
             tbody.innerHTML = users.map(user => `
                 <tr>
+                    <td>${h(user.username || '-')}</td>
                     <td>${h(user.phone)}</td>
                     <td>${h(user.real_name || '-')}</td>
                     <td>${h(user.department || '-')}</td>
@@ -2031,6 +2493,7 @@
             document.getElementById('userFormTitle').textContent = '添加用户';
             document.getElementById('editUserId').value = '';
             document.getElementById('userForm').reset();
+            document.getElementById('userUsername').disabled = false;
             document.getElementById('userPhone').disabled = false;
             document.getElementById('userStatusDiv').style.display = 'none';
             new bootstrap.Modal(document.getElementById('userFormModal')).show();
@@ -2046,6 +2509,7 @@
                 if (user) {
                     document.getElementById('userFormTitle').textContent = '编辑用户';
                     document.getElementById('editUserId').value = user.id;
+                    document.getElementById('userUsername').value = user.username || '';
                     document.getElementById('userPhone').value = user.phone;
                     document.getElementById('userPhone').disabled = true;
                     document.getElementById('userRealName').value = user.real_name || '';
@@ -2065,11 +2529,17 @@
         document.getElementById('saveUserBtn').addEventListener('click', async () => {
             const userId = document.getElementById('editUserId').value;
             const userData = {
+                username: document.getElementById('userUsername').value.trim(),
                 phone: document.getElementById('userPhone').value,
                 real_name: document.getElementById('userRealName').value,
                 department: document.getElementById('userDepartment').value,
                 role: document.getElementById('userRole').value
             };
+
+            if (userData.username && !/^[A-Za-z0-9_]{3,32}$/.test(userData.username)) {
+                alert('用户名需为3-32位字母数字下划线');
+                return;
+            }
 
             try {
                 let response;
@@ -2095,6 +2565,7 @@
                     alert(data.message);
                     bootstrap.Modal.getInstance(document.getElementById('userFormModal')).hide();
                     loadUsers();
+                    document.getElementById('userUsername').disabled = false;
                     document.getElementById('userPhone').disabled = false;
                 } else {
                     alert(data.message || '操作失败');
@@ -2143,3 +2614,27 @@
     </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 - 企业内部历史询价复用系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #f0f4ff 0%, #d9e7ff 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        }
+        .register-card {
+            width: 100%;
+            max-width: 520px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
+            padding: 1.5rem;
+        }
+        .strength-bar {
+            height: 6px;
+            border-radius: 999px;
+            background: #e5e7eb;
+            overflow: hidden;
+            margin-top: 0.35rem;
+        }
+        .strength-value {
+            height: 100%;
+            width: 0;
+            transition: width .2s ease;
+        }
+        .strength-text {
+            font-size: 0.82rem;
+            margin-top: 0.2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="register-card">
+        <h4 class="mb-3">用户注册</h4>
+        <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+        <div id="successAlert" class="alert alert-success d-none" role="alert"></div>
+        <form id="registerForm" class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">用户名</label>
+                <input id="username" class="form-control" maxlength="32" required placeholder="3-32位字母数字下划线">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">真实姓名</label>
+                <input id="realName" class="form-control" maxlength="100" required placeholder="如：王明">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">手机号</label>
+                <input id="phone" class="form-control" maxlength="11" required placeholder="11位手机号">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">部门</label>
+                <input id="department" class="form-control" maxlength="100" placeholder="如：采购部">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">密码</label>
+                <input id="password" type="password" class="form-control" required>
+                <div class="strength-bar"><div id="strengthValue" class="strength-value"></div></div>
+                <div id="strengthText" class="strength-text text-muted">至少8位，包含字母和数字</div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">确认密码</label>
+                <input id="confirmPassword" type="password" class="form-control" required>
+            </div>
+            <div class="col-12 d-flex gap-2">
+                <button id="submitBtn" type="submit" class="btn btn-primary">注册</button>
+                <a href="/login" class="btn btn-outline-secondary">返回登录</a>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const form = document.getElementById('registerForm');
+        const errorAlert = document.getElementById('errorAlert');
+        const successAlert = document.getElementById('successAlert');
+        const strengthValue = document.getElementById('strengthValue');
+        const strengthText = document.getElementById('strengthText');
+        const passwordInput = document.getElementById('password');
+
+        function showError(msg) {
+            successAlert.classList.add('d-none');
+            errorAlert.textContent = msg;
+            errorAlert.classList.remove('d-none');
+        }
+
+        function showSuccess(msg) {
+            errorAlert.classList.add('d-none');
+            successAlert.textContent = msg;
+            successAlert.classList.remove('d-none');
+        }
+
+        function calcStrength(password) {
+            let score = 0;
+            if (password.length >= 8) score += 40;
+            if (/[A-Za-z]/.test(password)) score += 30;
+            if (/\d/.test(password)) score += 20;
+            if (/[^A-Za-z0-9]/.test(password)) score += 10;
+            return Math.min(score, 100);
+        }
+
+        passwordInput.addEventListener('input', () => {
+            const score = calcStrength(passwordInput.value);
+            strengthValue.style.width = `${score}%`;
+            if (score < 40) {
+                strengthValue.style.background = '#ef4444';
+                strengthText.textContent = '弱';
+                strengthText.className = 'strength-text text-danger';
+            } else if (score < 70) {
+                strengthValue.style.background = '#f59e0b';
+                strengthText.textContent = '中';
+                strengthText.className = 'strength-text text-warning';
+            } else {
+                strengthValue.style.background = '#10b981';
+                strengthText.textContent = '强';
+                strengthText.className = 'strength-text text-success';
+            }
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorAlert.classList.add('d-none');
+            successAlert.classList.add('d-none');
+
+            const username = document.getElementById('username').value.trim();
+            const real_name = document.getElementById('realName').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+            const department = document.getElementById('department').value.trim();
+            const password = document.getElementById('password').value;
+            const confirm_password = document.getElementById('confirmPassword').value;
+
+            if (!/^[A-Za-z0-9_]{3,32}$/.test(username)) return showError('用户名格式不正确');
+            if (!/^1\d{10}$/.test(phone)) return showError('手机号格式不正确');
+            if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+                return showError('密码至少8位且包含字母和数字');
+            }
+            if (password !== confirm_password) return showError('两次密码不一致');
+
+            const btn = document.getElementById('submitBtn');
+            btn.disabled = true;
+            btn.textContent = '注册中...';
+            try {
+                const resp = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, real_name, phone, department, password, confirm_password })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    showError(data.message || '注册失败');
+                    return;
+                }
+                showSuccess(`注册成功，自动匹配到 ${data.bound_count || 0} 条工程师关联，2秒后跳转登录`);
+                setTimeout(() => { window.location.href = '/login'; }, 2000);
+            } catch (err) {
+                showError('网络错误，请稍后重试');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '注册';
+            }
+        });
+    </script>
+</body>
+</html>

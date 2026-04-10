@@ -115,6 +115,7 @@ class PriceRecord(db.Model):
     # 责任字段
     department = db.Column(db.String(100), comment='填报部门')
     engineer_name = db.Column(db.String(100), nullable=False, comment='填报工程师')
+    engineer_user_id = db.Column(db.Integer, comment='关联用户ID')
 
     # 业务标识字段
     inquiry_type = db.Column(db.String(50), comment='询价类别')
@@ -150,6 +151,7 @@ class PriceRecord(db.Model):
             'remark': self.remark,
             'department': self.department,
             'engineer_name': self.engineer_name,
+            'engineer_user_id': self.engineer_user_id,
             'inquiry_type': self.inquiry_type,
             # 来源追溯信息 - 需要跨库查询
             'source_file_name': None,  # 由业务层填充
@@ -165,8 +167,9 @@ class User(db.Model):
     __tablename__ = 'user'
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    username = db.Column(db.String(64), unique=True, comment='用户名')
     phone = db.Column(db.String(11), unique=True, nullable=False, comment='手机号')
-    password_hash = db.Column(db.String(256), nullable=False, comment='密码哈希')
+    password_hash = db.Column(db.String(128), nullable=False, comment='密码哈希')
     real_name = db.Column(db.String(100), comment='真实姓名')
     department = db.Column(db.String(100), comment='部门')
     role = db.Column(db.String(20), default='user', comment='角色: admin/user')
@@ -175,8 +178,8 @@ class User(db.Model):
     last_login = db.Column(db.DateTime, comment='最后登录时间')
 
     def set_password(self, password):
-        """设置密码（加密存储），使用 pbkdf2 确保跨 Python 版本兼容"""
-        self.password_hash = generate_password_hash(password, method='pbkdf2:sha256')
+        """设置密码（加密存储）"""
+        self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
         """验证密码"""
@@ -194,6 +197,7 @@ class User(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
+            'username': self.username,
             'phone': self.phone,
             'real_name': self.real_name,
             'department': self.department,
@@ -214,3 +218,30 @@ class User(db.Model):
 
     def get_id(self):
         return str(self.id)
+
+
+class EngineerBinding(db.Model):
+    """工程师名与用户账号绑定"""
+    __bind_key__ = 'user'
+    __tablename__ = 'engineer_binding'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    engineer_name_raw = db.Column(db.String(100), nullable=False, comment='原始工程师名')
+    engineer_name_norm = db.Column(db.String(100), nullable=False, index=True, comment='标准化工程师名')
+    user_id = db.Column(db.Integer, nullable=False, index=True, comment='关联用户ID')
+    bind_type = db.Column(db.String(20), default='auto', comment='绑定方式: auto/manual')
+    confidence = db.Column(db.Float, default=1.0, comment='匹配置信度')
+    created_at = db.Column(db.DateTime, default=datetime.now, comment='创建时间')
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now, comment='更新时间')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'engineer_name_raw': self.engineer_name_raw,
+            'engineer_name_norm': self.engineer_name_norm,
+            'user_id': self.user_id,
+            'bind_type': self.bind_type,
+            'confidence': self.confidence,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None,
+            'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S') if self.updated_at else None
+        }
