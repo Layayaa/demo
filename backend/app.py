@@ -335,6 +335,179 @@ def is_engineer_followup_query(query_text):
     return any(token in text for token in trigger_tokens)
 
 
+SUBMISSION_FOLLOW_UP_TOKENS = (
+    '这位', '这个人', '该人', '他', '她', '该上传人', '这个上传人',
+    '这个部门', '该部门', '这个组', '上面那个', '上面这位', '上一位'
+)
+
+
+def normalize_submission_actor_key(value):
+    text = normalize_engineer_name(value).lower()
+    text = re.sub(r'\s+', '', text)
+    return text
+
+
+def normalize_submission_department_key(value):
+    text = (value or '').strip().lower()
+    if not text:
+        return ''
+    text = re.sub(r'\s+', '', text)
+    text = text.replace('部门', '部')
+    if text.endswith('部分') and len(text) > 2:
+        text = text[:-1]
+    return text
+
+
+def format_submission_time_scope(parsed_params):
+    display = (parsed_params or {}).get('time_display')
+    if display:
+        return str(display)
+    return '近1年'
+
+
+def filter_success_inquiry_files_for_submission(start_date=None, end_date=None, uploader_filters=None, department_filters=None):
+    """按上传人/部门/时间过滤成功上传文件（用于智能统计与追溯）。"""
+    uploader_filters = [normalize_submission_actor_key(item) for item in (uploader_filters or []) if normalize_submission_actor_key(item)]
+    department_filters = [normalize_submission_department_key(item) for item in (department_filters or []) if normalize_submission_department_key(item)]
+
+    query = InquiryFile.query.filter(InquiryFile.parse_status == 'success')
+
+    if start_date:
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        query = query.filter(InquiryFile.upload_time >= start_dt)
+    if end_date:
+        end_dt = datetime.combine(end_date, datetime.max.time())
+        query = query.filter(InquiryFile.upload_time <= end_dt)
+
+    rows = query.order_by(InquiryFile.upload_time.desc()).all()
+    out = []
+    for item in rows:
+        upload_display = get_upload_user_display(item.upload_user) or normalize_engineer_name(item.upload_user) or ''
+        uploader_keys = {
+            normalize_submission_actor_key(upload_display),
+            normalize_submission_actor_key(item.upload_user),
+        }
+        department_key = normalize_submission_department_key(item.department)
+
+        if uploader_filters:
+            matched = False
+            for kw in uploader_filters:
+                if any(key and kw in key for key in uploader_keys):
+                    matched = True
+                    break
+            if not matched:
+                continue
+
+        if department_filters:
+            if not department_key:
+                continue
+            if not any(kw in department_key for kw in department_filters):
+                continue
+
+        out.append(item)
+
+    return out
+
+
+FILE_TRACE_NOISE_WORDS = {
+    '文件', '附件', '报价', '报价单', '询价', '询价单', '询价表', '报价表',
+    '记录', '资料', '哪个文件', '哪个附件', '来自哪个文件', '来自哪个附件',
+    '来源文件', '来源附件', '这份文件', '这个文件', '这份报价', '这个报价',
+    '这条记录', '是谁上传的', '谁上传的', '谁上传', '上传人',
+    '这条', '这个', '这份', '来自哪个', '来自哪份', '来自', '哪个', '哪份', '是谁', '上传的'
+}
+
+_ATTACHMENT_CN_TO_NUM = {
+    '一': '1', '二': '2', '三': '3', '四': '4', '五': '5',
+    '六': '6', '七': '7', '八': '8', '九': '9', '十': '10'
+}
+_ATTACHMENT_NUM_TO_CN = {v: k for k, v in _ATTACHMENT_CN_TO_NUM.items()}
+
+
+def normalize_file_trace_keyword(value):
+    text = (value or '').strip().lower()
+    if not text:
+        return ''
+    text = re.sub(r'[\s，。！？、,.!?；;：:\-_/()（）\[\]【】]+', '', text)
+    return text
+
+
+def _expand_attachment_token_variants(token):
+    variants = {token}
+    if not token.startswith('附件'):
+        return variants
+
+    suffix = token[2:]
+    if not suffix:
+        return variants
+
+    # 附件一 <=> 附件1
+    if suffix in _ATTACHMENT_CN_TO_NUM:
+        variants.add('附件' + _ATTACHMENT_CN_TO_NUM[suffix])
+    if suffix in _ATTACHMENT_NUM_TO_CN:
+        variants.add('附件' + _ATTACHMENT_NUM_TO_CN[suffix])
+
+    return variants
+
+
+def build_file_trace_keywords(file_keywords=None, lookup_subject=''):
+    raw_tokens = list(file_keywords or [])
+    if lookup_subject:
+        raw_tokens.append(lookup_subject)
+
+    normalized = []
+    for raw in raw_tokens:
+        value = normalize_file_trace_keyword(raw)
+        if not value or value in FILE_TRACE_NOISE_WORDS:
+            continue
+
+        # lookup_subject 可能是一句话，这里再切一遍
+        chunks = re.findall(r'[\u4e00-\u9fffA-Za-z0-9._\-]{2,80}', value)
+        if not chunks:
+            chunks = [value]
+
+        for chunk in chunks:
+            item = normalize_file_trace_keyword(chunk)
+            if not item or item in FILE_TRACE_NOISE_WORDS:
+                continue
+            normalized.append(item)
+
+    deduped = []
+    seen = set()
+    for token in normalized:
+        if token in seen:
+            continue
+        seen.add(token)
+        deduped.append(token)
+    return deduped
+
+
+def inquiry_file_matches_keywords(inquiry_file, keywords=None):
+    keywords = keywords or []
+    if not keywords:
+        return True
+
+    display_upload_user = get_upload_user_display(inquiry_file.upload_user) or ''
+    haystacks = [
+        normalize_file_trace_keyword(inquiry_file.file_name),
+        normalize_file_trace_keyword(getattr(inquiry_file, 'stored_file_name', None)),
+        normalize_file_trace_keyword(inquiry_file.upload_user),
+        normalize_file_trace_keyword(display_upload_user),
+        normalize_file_trace_keyword(inquiry_file.engineer_name),
+        normalize_file_trace_keyword(inquiry_file.department),
+    ]
+
+    for keyword in keywords:
+        if not keyword:
+            continue
+        variants = _expand_attachment_token_variants(keyword)
+        for variant in variants:
+            if any(field and variant in field for field in haystacks):
+                return True
+
+    return False
+
+
 def ensure_engineer_binding(user, source_name, bind_type='auto', confidence=1.0):
     """确保工程师名与用户存在绑定关系。"""
     if not user:
@@ -1450,6 +1623,48 @@ def get_source_file_info(file_id):
         return None
 
 
+def increment_reference_count_for_records(record_ids, step=1):
+    """为被查询/查看的记录累加引用次数。"""
+    if not record_ids:
+        return 0
+
+    ids = []
+    seen = set()
+    for value in record_ids:
+        try:
+            rid = int(value)
+        except (TypeError, ValueError):
+            continue
+        if rid <= 0 or rid in seen:
+            continue
+        seen.add(rid)
+        ids.append(rid)
+
+    if not ids:
+        return 0
+
+    try:
+        inc = int(step)
+    except (TypeError, ValueError):
+        inc = 1
+    if inc <= 0:
+        inc = 1
+
+    try:
+        db.session.query(PriceRecord).filter(
+            PriceRecord.record_id.in_(ids)
+        ).update(
+            {PriceRecord.reference_count: db.func.coalesce(PriceRecord.reference_count, 0) + inc},
+            synchronize_session=False
+        )
+        db.session.commit()
+        return len(ids)
+    except Exception as e:
+        db.session.rollback()
+        print(f"[reference_count] 引用计数更新失败: {e}", flush=True)
+        return 0
+
+
 def parse_natural_language_query(query_text):
     """解析自然语言查询 - 使用专业NLP解析器"""
     global nlp_parser
@@ -1548,9 +1763,419 @@ def natural_language_query():
                 except (TypeError, ValueError):
                     continue
 
+        entities = parsed_params.get('entities') or {}
+        uploader_filters = [
+            normalize_submission_actor_key(item)
+            for item in (entities.get('uploader_candidates') or [])
+            if normalize_submission_actor_key(item)
+        ]
+        department_filters = [
+            normalize_submission_department_key(item)
+            for item in (entities.get('department_candidates') or [])
+            if normalize_submission_department_key(item)
+        ]
+        stats_metric = entities.get('stats_metric') or 'file_count'
+        file_keywords = build_file_trace_keywords(entities.get('file_keywords') or [])
+
+        parsed_params['uploader_filters'] = uploader_filters
+        parsed_params['department_filters'] = department_filters
+        parsed_params['stats_metric'] = stats_metric
+        parsed_params['file_keywords'] = file_keywords
+        parsed_params['normalized_query_text'] = entities.get('normalized_query_text') or ''
+        parsed_params['corrections'] = entities.get('corrections') or []
+
+        submission_followup = (
+            is_followup_reference_query(query_text, lookup_subject)
+            or any(token in query_text for token in SUBMISSION_FOLLOW_UP_TOKENS)
+        )
+        if parsed_params.get('parsed_intent') in {'uploader_stats', 'department_stats'} and submission_followup and last_context:
+            if not uploader_filters:
+                uploader_filters = [
+                    normalize_submission_actor_key(item)
+                    for item in (last_context.get('uploader_filters') or [])
+                    if normalize_submission_actor_key(item)
+                ]
+            if not department_filters:
+                department_filters = [
+                    normalize_submission_department_key(item)
+                    for item in (last_context.get('department_filters') or [])
+                    if normalize_submission_department_key(item)
+                ]
+            parsed_params['uploader_filters'] = uploader_filters
+            parsed_params['department_filters'] = department_filters
+            if uploader_filters or department_filters:
+                parsed_params['context_inherited'] = True
+
+        if parsed_params.get('parsed_intent') in {'uploader_stats', 'department_stats'}:
+            start_date = parsed_params.get('start_date')
+            end_date = parsed_params.get('end_date')
+            effective_start_date = start_date
+            if not effective_start_date and not end_date:
+                effective_start_date = datetime.now().date() - timedelta(days=365)
+
+            success_files = filter_success_inquiry_files_for_submission(
+                start_date=effective_start_date,
+                end_date=end_date,
+                uploader_filters=uploader_filters,
+                department_filters=department_filters
+            )
+
+            context_ids = []
+            for source in success_files:
+                if source.file_id is None:
+                    continue
+                context_ids.append(source.file_id)
+                if len(context_ids) >= 200:
+                    break
+
+            session['last_natural_query_context'] = {
+                'query_text': query_text,
+                'parsed_intent': parsed_params.get('parsed_intent') or '',
+                'material_name': parsed_params.get('material_name') or '',
+                'specification': parsed_params.get('specification') or '',
+                'region': parsed_params.get('region') or '',
+                'lookup_subject': parsed_params.get('lookup_subject') or '',
+                'uploader_filters': uploader_filters,
+                'department_filters': department_filters,
+                'stats_metric': stats_metric,
+                'file_keywords': parsed_params.get('file_keywords') or [],
+                'file_ids': context_ids,
+                'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            session.modified = True
+
+            scope_text = format_submission_time_scope(parsed_params)
+            if stats_metric == 'record_count':
+                sort_key = 'record_count'
+            elif stats_metric == 'uploader_count' and parsed_params.get('parsed_intent') == 'department_stats':
+                sort_key = 'uploader_count'
+            else:
+                sort_key = 'file_count'
+
+            if parsed_params.get('parsed_intent') == 'uploader_stats':
+                uploader_map = {}
+                for source in success_files:
+                    display_name = get_upload_user_display(source.upload_user) or normalize_engineer_name(source.upload_user) or '未知上传人'
+                    key = normalize_submission_actor_key(display_name) or normalize_submission_actor_key(source.upload_user) or f"file_{source.file_id}"
+                    if key not in uploader_map:
+                        uploader_map[key] = {
+                            'upload_user': display_name,
+                            'department_set': set(),
+                            'file_count': 0,
+                            'record_count': 0,
+                            'latest_upload_time': None,
+                        }
+                    uploader_map[key]['file_count'] += 1
+                    uploader_map[key]['record_count'] += int(source.record_count or 0)
+                    if source.department:
+                        uploader_map[key]['department_set'].add(source.department)
+                    if source.upload_time and (
+                        not uploader_map[key]['latest_upload_time']
+                        or source.upload_time > uploader_map[key]['latest_upload_time']
+                    ):
+                        uploader_map[key]['latest_upload_time'] = source.upload_time
+
+                uploader_data = []
+                for item in uploader_map.values():
+                    uploader_data.append({
+                        'upload_user': item['upload_user'],
+                        'department': '、'.join(sorted(item['department_set'])) if item['department_set'] else '-',
+                        'file_count': item['file_count'],
+                        'record_count': item['record_count'],
+                        'latest_upload_time': item['latest_upload_time'].strftime('%Y-%m-%d %H:%M:%S') if item['latest_upload_time'] else '-',
+                    })
+
+                uploader_data.sort(key=lambda x: (x.get(sort_key) or 0, x.get('latest_upload_time') or ''), reverse=True)
+                total = len(uploader_data)
+                pages = (total + per_page - 1) // per_page if total > 0 else 1
+                start = (page - 1) * per_page
+                end = start + per_page
+                page_data = uploader_data[start:end] if start < total else []
+
+                total_files = sum(item.get('file_count', 0) for item in uploader_data)
+                total_records = sum(item.get('record_count', 0) for item in uploader_data)
+                summary = f"{scope_text}共统计到{total}位上传人，累计提交{total_files}份报价文件（{total_records}条记录）。"
+                if uploader_filters and total == 1:
+                    row = uploader_data[0]
+                    metric_value = row.get(sort_key) or 0
+                    if sort_key == 'record_count':
+                        metric_label = '条报价记录'
+                    elif sort_key == 'uploader_count':
+                        metric_label = '位上传人'
+                    else:
+                        metric_label = '份报价文件'
+                    summary = f"{row.get('upload_user') or '该上传人'}在{scope_text}提交了{metric_value}{metric_label}（文件{row.get('file_count', 0)}份，记录{row.get('record_count', 0)}条）。"
+
+                return jsonify({
+                    'success': True,
+                    'uploader_stats_mode': True,
+                    'metric': sort_key,
+                    'summary': summary,
+                    'data': page_data,
+                    'total': total,
+                    'page': page,
+                    'per_page': per_page,
+                    'pages': pages,
+                    'parsed_params': parsed_params
+                })
+
+            department_map = {}
+            for source in success_files:
+                dept_name = source.department or '未知部门'
+                dept_key = normalize_submission_department_key(dept_name) or dept_name
+                if dept_key not in department_map:
+                    department_map[dept_key] = {
+                        'department': dept_name,
+                        'file_count': 0,
+                        'record_count': 0,
+                        'uploader_set': set(),
+                        'latest_upload_time': None,
+                    }
+                department_map[dept_key]['file_count'] += 1
+                department_map[dept_key]['record_count'] += int(source.record_count or 0)
+                upload_name = get_upload_user_display(source.upload_user) or normalize_engineer_name(source.upload_user) or ''
+                if upload_name:
+                    department_map[dept_key]['uploader_set'].add(upload_name)
+                if source.upload_time and (
+                    not department_map[dept_key]['latest_upload_time']
+                    or source.upload_time > department_map[dept_key]['latest_upload_time']
+                ):
+                    department_map[dept_key]['latest_upload_time'] = source.upload_time
+
+            department_data = []
+            for item in department_map.values():
+                department_data.append({
+                    'department': item['department'],
+                    'file_count': item['file_count'],
+                    'record_count': item['record_count'],
+                    'uploader_count': len(item['uploader_set']),
+                    'latest_upload_time': item['latest_upload_time'].strftime('%Y-%m-%d %H:%M:%S') if item['latest_upload_time'] else '-',
+                })
+
+            department_data.sort(key=lambda x: (x.get(sort_key) or 0, x.get('latest_upload_time') or ''), reverse=True)
+            total = len(department_data)
+            pages = (total + per_page - 1) // per_page if total > 0 else 1
+            start = (page - 1) * per_page
+            end = start + per_page
+            page_data = department_data[start:end] if start < total else []
+
+            total_files = sum(item.get('file_count', 0) for item in department_data)
+            total_records = sum(item.get('record_count', 0) for item in department_data)
+            summary = f"{scope_text}共统计到{total}个部门，累计提交{total_files}份报价文件（{total_records}条记录）。"
+            if department_filters and total == 1:
+                row = department_data[0]
+                metric_value = row.get(sort_key) or 0
+                if sort_key == 'record_count':
+                    metric_label = '条报价记录'
+                elif sort_key == 'uploader_count':
+                    metric_label = '位上传人'
+                else:
+                    metric_label = '份报价文件'
+                summary = f"{row.get('department') or '该部门'}在{scope_text}提交了{metric_value}{metric_label}（上传人{row.get('uploader_count', 0)}位）。"
+
+            return jsonify({
+                'success': True,
+                'department_stats_mode': True,
+                'metric': sort_key,
+                'summary': summary,
+                'data': page_data,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'pages': pages,
+                'parsed_params': parsed_params
+            })
+
+        if parsed_params.get('parsed_intent') == 'file_trace':
+            compact_query_text = _compact_text(query_text)
+            compact_material_name = _compact_text(parsed_params.get('material_name') or '')
+            trace_followup = (
+                is_followup_reference_query(query_text, lookup_subject)
+                or any(token in query_text for token in FOLLOW_UP_REFERENCE_TOKENS)
+                or any(token in query_text for token in SUBMISSION_FOLLOW_UP_TOKENS)
+            )
+            has_identity_filter = bool(uploader_filters or department_filters)
+            has_param_filter = bool(parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region'))
+
+            # 避免将整句“这条记录来自哪个文件”误当作材料名
+            if compact_material_name and compact_material_name == compact_query_text and (file_keywords or trace_followup):
+                parsed_params['material_name'] = ''
+                has_param_filter = bool(parsed_params.get('specification') or parsed_params.get('region'))
+
+            trace_lookup_subject = '' if (trace_followup and not file_keywords) else lookup_subject
+            trace_keywords = build_file_trace_keywords(file_keywords, trace_lookup_subject)
+            parsed_params['file_keywords'] = trace_keywords
+
+            if trace_followup and last_context:
+                if not trace_keywords:
+                    trace_keywords = build_file_trace_keywords(
+                        last_context.get('file_keywords') or []
+                    )
+                    parsed_params['file_keywords'] = trace_keywords
+
+                if not uploader_filters:
+                    uploader_filters = [
+                        normalize_submission_actor_key(item)
+                        for item in (last_context.get('uploader_filters') or [])
+                        if normalize_submission_actor_key(item)
+                    ]
+                    parsed_params['uploader_filters'] = uploader_filters
+
+                if not department_filters:
+                    department_filters = [
+                        normalize_submission_department_key(item)
+                        for item in (last_context.get('department_filters') or [])
+                        if normalize_submission_department_key(item)
+                    ]
+                    parsed_params['department_filters'] = department_filters
+
+                if context_file_ids and not parsed_params.get('context_file_ids'):
+                    parsed_params['context_file_ids'] = context_file_ids
+
+                if trace_keywords or parsed_params.get('context_file_ids') or uploader_filters or department_filters:
+                    parsed_params['context_inherited'] = True
+
+            candidate_file_ids = set()
+            for value in (parsed_params.get('context_file_ids') or []):
+                try:
+                    fid = int(value)
+                    if fid > 0:
+                        candidate_file_ids.add(fid)
+                except (TypeError, ValueError):
+                    continue
+
+            if has_param_filter:
+                file_id_query = PriceRecord.query
+
+                if parsed_params.get('material_name'):
+                    search_terms = [parsed_params['material_name']]
+                    if parsed_params.get('material_synonyms'):
+                        search_terms.extend(parsed_params['material_synonyms'])
+                    or_conditions = [PriceRecord.material_name.like(f'%{term}%') for term in search_terms if term]
+                    if or_conditions:
+                        file_id_query = file_id_query.filter(db.or_(*or_conditions))
+
+                if parsed_params.get('specification'):
+                    file_id_query = file_id_query.filter(PriceRecord.specification.like(f"%{parsed_params['specification']}%"))
+
+                if parsed_params.get('region'):
+                    region_terms = [parsed_params['region']]
+                    if parsed_params.get('expanded_search_terms'):
+                        region_terms.extend([item for item in parsed_params['expanded_search_terms'] if item])
+                    region_or_conditions = [PriceRecord.region.like(f'%{term}%') for term in region_terms if term]
+                    if region_or_conditions:
+                        file_id_query = file_id_query.filter(db.or_(*region_or_conditions))
+
+                start_date = parsed_params.get('start_date')
+                end_date = parsed_params.get('end_date')
+                if start_date:
+                    file_id_query = file_id_query.filter(PriceRecord.quote_date >= start_date)
+                if end_date:
+                    file_id_query = file_id_query.filter(PriceRecord.quote_date <= end_date)
+                if not start_date and not end_date:
+                    one_year_ago = datetime.now().date() - timedelta(days=365)
+                    file_id_query = file_id_query.filter(PriceRecord.quote_date >= one_year_ago)
+
+                matched_records = rank_records(file_id_query.limit(max_scan).all(), parsed_params)
+                for item in matched_records:
+                    if item.file_id is not None:
+                        candidate_file_ids.add(item.file_id)
+
+            if not (has_param_filter or trace_keywords or candidate_file_ids or has_identity_filter):
+                return jsonify({'success': False, 'message': '请补充材料名、规格或附件关键词后再追溯来源文件'}), 400
+
+            start_date = parsed_params.get('start_date')
+            end_date = parsed_params.get('end_date')
+            effective_start_date = start_date
+            if not effective_start_date and not end_date:
+                effective_start_date = datetime.now().date() - timedelta(days=365)
+
+            success_files = filter_success_inquiry_files_for_submission(
+                start_date=effective_start_date,
+                end_date=end_date,
+                uploader_filters=uploader_filters,
+                department_filters=department_filters
+            )
+
+            if candidate_file_ids:
+                success_files = [item for item in success_files if item.file_id in candidate_file_ids]
+
+            if trace_keywords:
+                success_files = [item for item in success_files if inquiry_file_matches_keywords(item, trace_keywords)]
+
+            trace_rows = []
+            context_ids = []
+            for source_file in success_files:
+                uploader_user = get_user_by_upload_user(source_file.upload_user)
+                upload_display = get_upload_user_display(source_file.upload_user) or normalize_engineer_name(source_file.upload_user) or '未知上传人'
+                record_count = int(source_file.record_count or 0)
+                if record_count <= 0 and source_file.file_id is not None:
+                    record_count = PriceRecord.query.filter_by(file_id=source_file.file_id).count()
+
+                trace_rows.append({
+                    'file_id': source_file.file_id,
+                    'file_name': source_file.file_name or '-',
+                    'upload_user': upload_display,
+                    'department': source_file.department or '未知',
+                    'engineer_name': source_file.engineer_name or '未知',
+                    'upload_time': source_file.upload_time.strftime('%Y-%m-%d %H:%M:%S') if source_file.upload_time else '-',
+                    'record_count': record_count,
+                    'is_bound': bool(uploader_user),
+                    'phone_masked': mask_phone(uploader_user.phone) if uploader_user else '',
+                    'uploader_user_id': uploader_user.id if uploader_user else None,
+                })
+
+                if source_file.file_id is not None:
+                    context_ids.append(source_file.file_id)
+
+            trace_rows.sort(key=lambda x: ((x.get('upload_time') or ''), int(x.get('record_count') or 0)), reverse=True)
+            total = len(trace_rows)
+            pages = (total + per_page - 1) // per_page if total > 0 else 1
+            start = (page - 1) * per_page
+            end = start + per_page
+            page_data = trace_rows[start:end] if start < total else []
+
+            scope_text = format_submission_time_scope(parsed_params)
+            total_records = sum(int(item.get('record_count') or 0) for item in trace_rows)
+            if total == 0:
+                summary = f"{scope_text}未命中来源文件，请补充附件关键词或更具体的筛选条件。"
+            elif total == 1:
+                row = trace_rows[0]
+                summary = f"{scope_text}定位到1份来源文件：{row.get('file_name') or '-'}，由{row.get('upload_user') or '未知上传人'}上传（{row.get('record_count', 0)}条记录）。"
+            else:
+                summary = f"{scope_text}定位到{total}份来源文件，共{total_records}条报价记录。"
+
+            session['last_natural_query_context'] = {
+                'query_text': query_text,
+                'parsed_intent': parsed_params.get('parsed_intent') or '',
+                'material_name': parsed_params.get('material_name') or '',
+                'specification': parsed_params.get('specification') or '',
+                'region': parsed_params.get('region') or '',
+                'lookup_subject': parsed_params.get('lookup_subject') or '',
+                'uploader_filters': uploader_filters,
+                'department_filters': department_filters,
+                'stats_metric': stats_metric,
+                'file_keywords': trace_keywords,
+                'file_ids': context_ids[:200],
+                'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            session.modified = True
+
+            return jsonify({
+                'success': True,
+                'file_trace_mode': True,
+                'summary': summary,
+                'data': page_data,
+                'total': total,
+                'page': page,
+                'per_page': per_page,
+                'pages': pages,
+                'parsed_params': parsed_params
+            })
+
         if not parsed_params.get('material_name'):
             # 对价格查询允许降级；工程师/上传人查询不直接回退整句，避免把“谁上传了...”当材料名
-            if parsed_params.get('parsed_intent') not in {'engineer_lookup', 'uploader_lookup'}:
+            if parsed_params.get('parsed_intent') not in {'engineer_lookup', 'uploader_lookup', 'uploader_stats', 'department_stats', 'file_trace'}:
                 parsed_params['material_name'] = query_text
             else:
                 parsed_params['material_name'] = ''
@@ -1563,6 +2188,15 @@ def natural_language_query():
             and compact_material_name
             and compact_material_name == compact_query_text
             and is_engineer_followup_query(query_text)
+        ):
+            parsed_params['material_name'] = ''
+
+        # 避免将“成唐提交的报价”整句误判为材料名，优先按上传人/部门语义处理
+        if (
+            parsed_params.get('parsed_intent') == 'uploader_lookup'
+            and compact_material_name
+            and compact_material_name == compact_query_text
+            and (uploader_filters or department_filters or entities.get('has_submission_action'))
         ):
             parsed_params['material_name'] = ''
 
@@ -1579,6 +2213,22 @@ def natural_language_query():
                     parsed_params['lookup_subject'] = lookup_subject
                 if context_file_ids:
                     parsed_params['context_file_ids'] = context_file_ids
+
+                if not uploader_filters:
+                    uploader_filters = [
+                        normalize_submission_actor_key(item)
+                        for item in (last_context.get('uploader_filters') or [])
+                        if normalize_submission_actor_key(item)
+                    ]
+                if not department_filters:
+                    department_filters = [
+                        normalize_submission_department_key(item)
+                        for item in (last_context.get('department_filters') or [])
+                        if normalize_submission_department_key(item)
+                    ]
+                parsed_params['uploader_filters'] = uploader_filters
+                parsed_params['department_filters'] = department_filters
+
                 parsed_params['context_inherited'] = True
                 print(f"[自然语言查询] uploader_lookup 使用上下文承接: files={len(context_file_ids)}", flush=True)
 
@@ -1605,8 +2255,85 @@ def natural_language_query():
 
         if parsed_params.get('parsed_intent') == 'uploader_lookup':
             has_context = bool(parsed_params.get('context_file_ids'))
-            if not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region') or len(lookup_subject) >= 2 or has_context):
+            has_identity_filter = bool(uploader_filters or department_filters)
+            if not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region') or len(lookup_subject) >= 2 or has_context or has_identity_filter):
                 return jsonify({'success': False, 'message': '请补充材料名、规格或文件关键词后再查询上传人'}), 400
+
+            # 仅按“上传人/部门”查询时，直接基于文件维度返回结果
+            has_param_filter = bool(parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region'))
+            if has_identity_filter and not has_param_filter:
+                start_date = parsed_params.get('start_date')
+                end_date = parsed_params.get('end_date')
+                effective_start_date = start_date
+                if not effective_start_date and not end_date:
+                    effective_start_date = datetime.now().date() - timedelta(days=365)
+
+                success_files = filter_success_inquiry_files_for_submission(
+                    start_date=effective_start_date,
+                    end_date=end_date,
+                    uploader_filters=uploader_filters,
+                    department_filters=department_filters
+                )
+
+                uploader_data = []
+                context_ids = []
+                for source_file in success_files:
+                    uploader_user = get_user_by_upload_user(source_file.upload_user)
+                    uploader_data.append({
+                        'file_id': source_file.file_id,
+                        'file_name': source_file.file_name or '-',
+                        'upload_user': get_upload_user_display(source_file.upload_user) or '未知',
+                        'upload_time': source_file.upload_time.strftime('%Y-%m-%d %H:%M:%S') if source_file.upload_time else None,
+                        'department': source_file.department or '未知',
+                        'engineer_name': source_file.engineer_name or '未知',
+                        'uploader_user_id': uploader_user.id if uploader_user else None,
+                        'phone_masked': mask_phone(uploader_user.phone) if uploader_user else '',
+                        'is_bound': bool(uploader_user),
+                        'record_count': int(source_file.record_count or 0),
+                        'latest_quote': None,
+                    })
+                    if source_file.file_id is not None:
+                        context_ids.append(source_file.file_id)
+
+                total = len(uploader_data)
+                pages = (total + per_page - 1) // per_page if total > 0 else 1
+                start = (page - 1) * per_page
+                end = start + per_page
+                page_data = uploader_data[start:end] if start < total else []
+
+                session['last_natural_query_context'] = {
+                    'query_text': query_text,
+                    'parsed_intent': parsed_params.get('parsed_intent') or '',
+                    'material_name': parsed_params.get('material_name') or '',
+                    'specification': parsed_params.get('specification') or '',
+                    'region': parsed_params.get('region') or '',
+                    'lookup_subject': parsed_params.get('lookup_subject') or '',
+                    'uploader_filters': uploader_filters,
+                    'department_filters': department_filters,
+                    'stats_metric': stats_metric,
+                    'file_keywords': parsed_params.get('file_keywords') or [],
+                    'file_ids': context_ids[:200],
+                    'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                session.modified = True
+
+                summary = None
+                if has_identity_filter:
+                    scope_text = format_submission_time_scope(parsed_params)
+                    total_records = sum(int(item.get('record_count') or 0) for item in uploader_data)
+                    summary = f"{scope_text}命中{total}份报价文件（{total_records}条记录）。"
+
+                return jsonify({
+                    'success': True,
+                    'uploader_mode': True,
+                    'summary': summary,
+                    'data': page_data,
+                    'total': total,
+                    'page': page,
+                    'per_page': per_page,
+                    'pages': pages,
+                    'parsed_params': parsed_params
+                })
 
         # 构建数据库查询
         query = PriceRecord.query
@@ -1750,6 +2477,10 @@ def natural_language_query():
             'specification': parsed_params.get('specification') or '',
             'region': parsed_params.get('region') or '',
             'lookup_subject': parsed_params.get('lookup_subject') or '',
+            'uploader_filters': uploader_filters,
+            'department_filters': department_filters,
+            'stats_metric': stats_metric,
+            'file_keywords': parsed_params.get('file_keywords') or [],
             'file_ids': context_ids,
             'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
@@ -1856,6 +2587,9 @@ def natural_language_query():
         start = (page - 1) * per_page
         end = start + per_page
         page_data = results[start:end] if start < total else []
+
+        # 自然语言价格列表结果按当前页累计引用次数
+        increment_reference_count_for_records([item.get('record_id') for item in page_data])
 
         return jsonify({
             'success': True,
@@ -2028,6 +2762,9 @@ def query_records():
                 result['source_department'] = source_file.department
                 result['source_engineer'] = source_file.engineer_name
             results.append(result)
+
+        # 当前页结果视为一次引用
+        increment_reference_count_for_records([item.record_id for item in pagination.items])
 
         return jsonify({
             'success': True,
@@ -2223,6 +2960,10 @@ def get_record_detail(record_id):
         record = PriceRecord.query.get(record_id)
         if not record:
             return jsonify({'success': False, 'message': '记录不存在'}), 404
+
+        record.reference_count = int(record.reference_count or 0) + 1
+        db.session.commit()
+        db.session.refresh(record)
 
         result = record.to_dict()
 
@@ -3021,6 +3762,23 @@ if __name__ == '__main__':
     print(f"访问地址: http://localhost:{port}")
     print("=" * 60)
     app.run(debug=False, host='0.0.0.0', port=port)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

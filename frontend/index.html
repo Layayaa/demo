@@ -1467,13 +1467,152 @@
                 return `<div class="text-danger">查询失败：${escapeHtml(result?.message || '未知错误')}</div>`;
             }
 
+            if (result.uploader_stats_mode) {
+                const rows = result.data || [];
+                const inheritedTip = result?.parsed_params?.context_inherited
+                    ? '<div class="small text-primary mb-2">已基于上一轮上下文自动补全统计对象。</div>'
+                    : '';
+                const summary = result.summary
+                    ? `<div class="alert alert-info py-2 mb-2">${escapeHtml(result.summary)}</div>`
+                    : '';
+                if (!rows.length) {
+                    return `${inheritedTip}${summary}<div>未找到符合条件的上传统计数据。</div>`;
+                }
+
+                const tableRows = rows.map((r) => `
+                    <tr>
+                        <td>${escapeHtml(r.upload_user || '-')}</td>
+                        <td>${escapeHtml(r.department || '-')}</td>
+                        <td>${escapeHtml(String(r.file_count || 0))}</td>
+                        <td>${escapeHtml(String(r.record_count || 0))}</td>
+                        <td>${escapeHtml(r.latest_upload_time || '-')}</td>
+                    </tr>
+                `).join('');
+
+                return `
+                    ${inheritedTip}${summary}
+                    <div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 位上传人：</div>
+                    <div class="table-responsive" style="max-height: 460px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+                        <table class="table table-sm mb-0 table-hover">
+                            <thead style="position: sticky; top: 0; background: #eef4ff; z-index: 1;">
+                                <tr>
+                                    <th>上传人</th>
+                                    <th>部门</th>
+                                    <th>文件数</th>
+                                    <th>记录数</th>
+                                    <th>最近上传</th>
+                                </tr>
+                            </thead>
+                            <tbody>${tableRows}</tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
+            if (result.department_stats_mode) {
+                const rows = result.data || [];
+                const inheritedTip = result?.parsed_params?.context_inherited
+                    ? '<div class="small text-primary mb-2">已基于上一轮上下文自动补全统计对象。</div>'
+                    : '';
+                const summary = result.summary
+                    ? `<div class="alert alert-info py-2 mb-2">${escapeHtml(result.summary)}</div>`
+                    : '';
+                if (!rows.length) {
+                    return `${inheritedTip}${summary}<div>未找到符合条件的部门统计数据。</div>`;
+                }
+
+                const tableRows = rows.map((r) => `
+                    <tr>
+                        <td>${escapeHtml(r.department || '-')}</td>
+                        <td>${escapeHtml(String(r.file_count || 0))}</td>
+                        <td>${escapeHtml(String(r.record_count || 0))}</td>
+                        <td>${escapeHtml(String(r.uploader_count || 0))}</td>
+                        <td>${escapeHtml(r.latest_upload_time || '-')}</td>
+                    </tr>
+                `).join('');
+
+                return `
+                    ${inheritedTip}${summary}
+                    <div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 个部门：</div>
+                    <div class="table-responsive" style="max-height: 460px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+                        <table class="table table-sm mb-0 table-hover">
+                            <thead style="position: sticky; top: 0; background: #eef4ff; z-index: 1;">
+                                <tr>
+                                    <th>部门</th>
+                                    <th>文件数</th>
+                                    <th>记录数</th>
+                                    <th>上传人数</th>
+                                    <th>最近上传</th>
+                                </tr>
+                            </thead>
+                            <tbody>${tableRows}</tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            if (result.file_trace_mode) {
+                const rows = result.data || [];
+                const inheritedTip = result?.parsed_params?.context_inherited
+                    ? '<div class="small text-primary mb-2">已基于上一轮上下文自动定位来源文件。</div>'
+                    : '';
+                const summary = result.summary
+                    ? `<div class="alert alert-info py-2 mb-2">${escapeHtml(result.summary)}</div>`
+                    : '';
+                if (!rows.length) {
+                    return `${inheritedTip}${summary}<div>未找到来源文件，请补充附件关键词或筛选条件后重试。</div>`;
+                }
+
+                const tableRows = rows.map((r) => {
+                    const contactBtn = Number.isFinite(Number(r.file_id))
+                        ? `<button class="btn btn-sm btn-outline-success" onclick="showUploaderContact(${Number(r.file_id)})"><i class="fas fa-phone-alt me-1"></i>联系上传人</button>`
+                        : '<button class="btn btn-sm btn-outline-secondary" disabled>无法联系</button>';
+                    return `
+                        <tr>
+                            <td>${escapeHtml(r.file_name || '-')}</td>
+                            <td>${escapeHtml(r.upload_user || '-')}</td>
+                            <td>${escapeHtml(r.department || '-')}</td>
+                            <td>${escapeHtml(r.engineer_name || '-')}</td>
+                            <td>${escapeHtml(r.upload_time || '-')}</td>
+                            <td>${escapeHtml(String(r.record_count || 0))}</td>
+                            <td>${escapeHtml(r.phone_masked || '未关联')}</td>
+                            <td>${contactBtn}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                return `
+                    ${inheritedTip}${summary}
+                    <div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 份来源文件：</div>
+                    <div class="table-responsive" style="max-height: 460px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
+                        <table class="table table-sm mb-0 table-hover">
+                            <thead style="position: sticky; top: 0; background: #eef4ff; z-index: 1;">
+                                <tr>
+                                    <th>来源文件</th>
+                                    <th>上传人</th>
+                                    <th>部门</th>
+                                    <th>询价工程师</th>
+                                    <th>上传时间</th>
+                                    <th>记录数</th>
+                                    <th>联系方式</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>${tableRows}</tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
             if (result.uploader_mode) {
                 const rows = result.data || [];
                 const inheritedTip = result?.parsed_params?.context_inherited
                     ? '<div class="small text-primary mb-2">已基于上一轮询价结果定位“这份报价”。</div>'
                     : '';
+                const summary = result.summary
+                    ? `<div class="alert alert-info py-2 mb-2">${escapeHtml(result.summary)}</div>`
+                    : '';
                 if (!rows.length) {
-                    return `${inheritedTip}<div>未找到上传人信息，请补充材料名、规格或文件关键词后重试。</div>`;
+                    return `${inheritedTip}${summary}<div>未找到上传人信息，请补充材料名、规格或文件关键词后重试。</div>`;
                 }
 
                 const tableRows = rows.map((r) => {
@@ -1493,7 +1632,7 @@
                 }).join('');
 
                 return `
-                    ${inheritedTip}<div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 条记录：</div>
+                    ${inheritedTip}${summary}<div class="mb-2 text-muted">命中 <strong>${h(result.total || rows.length)}</strong> 条记录：</div>
                     <div class="table-responsive" style="max-height: 460px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px;">
                         <table class="table table-sm mb-0 table-hover">
                             <thead style="position: sticky; top: 0; background: #eef4ff; z-index: 1;">
@@ -1560,7 +1699,7 @@
                         <td>${escapeHtml(r.region || '-')}</td>
                         <td>${escapeHtml(r.quote_date || '-')}</td>
                         <td>${escapeHtml(r.source_upload_user || '-')}</td>
-                        <td>${escapeHtml(r.source_engineer || r.engineer_name || '-')}</td>
+                        <td>${escapeHtml(r.engineer_name || r.source_engineer || '-')}</td>
                         <td>${detailBtn}</td>
                     </tr>
                 `;
@@ -1741,11 +1880,10 @@
                                             <td>${validity_badge}</td>
                                             <td>${h(r.supplier || '-')}</td>
                                             <td><small>${h(r.source_upload_user || '-')}</small></td>
-                                            <td><small>${h(r.source_engineer || r.engineer_name || '-')}</small></td>
+                                            <td><small>${h(r.engineer_name || r.source_engineer || '-')}</small></td>
                                             <td><small>${h(r.source_upload_time || '-')}</small></td>
-                                            <td class="d-flex gap-1">
+                                            <td>
                                                 <button class="btn btn-sm btn-outline-primary" onclick="showDetail(${Number(r.record_id)})"><i class="fas fa-eye"></i></button>
-                                                <button class="btn btn-sm btn-outline-success" onclick="showEngineerContact(${Number(r.record_id)})"><i class="fas fa-phone-alt"></i></button>
                                             </td>
                                         </tr>
                                     `;
@@ -2670,6 +2808,9 @@
     </script>
 </body>
 </html>
+
+
+
 
 
 
