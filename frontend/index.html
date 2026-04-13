@@ -301,6 +301,21 @@
             background-color: var(--primary-light);
         }
 
+        .user-op-col {
+            min-width: 300px;
+        }
+
+        .user-op-cell {
+            white-space: nowrap;
+        }
+
+        .user-op-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: nowrap;
+        }
+
         .duplicate-alert {
             background-color: #fef3c7;
             border: 1px solid #fbbf24;
@@ -657,7 +672,7 @@
                                     <th>部门</th>
                                     <th>角色</th>
                                     <th>状态</th>
-                                    <th>操作</th>
+                                    <th class="user-op-col">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="userTableBody">
@@ -1041,22 +1056,45 @@
                 </div>
                 <div class="modal-body">
                     <div class="d-flex gap-2 mb-3">
-                        <button class="btn btn-sm btn-outline-primary" id="refreshBindingBtn">刷新待关联列表</button>
+                        <button class="btn btn-sm btn-outline-primary" id="refreshBindingBtn">&#21047;&#26032;&#20851;&#32852;&#21015;&#34920;</button>
                     </div>
+
+                    <h6 class="mb-2">&#24453;&#20851;&#32852;&#21015;&#34920;</h6>
                     <div class="table-responsive">
                         <table class="table table-hover">
                             <thead>
                                 <tr>
-                                    <th>工程师名字</th>
-                                    <th>部门</th>
-                                    <th>记录数</th>
-                                    <th>最近报价</th>
-                                    <th style="min-width: 240px;">绑定到用户</th>
-                                    <th>操作</th>
+                                    <th>&#24037;&#31243;&#24072;&#21517;&#23383;</th>
+                                    <th>&#37096;&#38376;</th>
+                                    <th>&#35760;&#24405;&#25968;</th>
+                                    <th>&#26368;&#36817;&#25253;&#20215;</th>
+                                    <th style="min-width: 240px;">&#32465;&#23450;&#21040;&#29992;&#25143;</th>
+                                    <th>&#25805;&#20316;</th>
                                 </tr>
                             </thead>
                             <tbody id="bindingTableBody">
-                                <tr><td colspan="6" class="text-center text-muted">加载中...</td></tr>
+                                <tr><td colspan="6" class="text-center text-muted">&#21152;&#36733;&#20013;...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h6 class="mt-4 mb-2">&#24050;&#20851;&#32852;&#21015;&#34920;</h6>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm">
+                            <thead>
+                                <tr>
+                                    <th>&#24037;&#31243;&#24072;&#21517;&#23383;</th>
+                                    <th>&#26631;&#20934;&#21517;</th>
+                                    <th>&#20851;&#32852;&#29992;&#25143;</th>
+                                    <th>&#25163;&#26426;&#21495;</th>
+                                    <th>&#37096;&#38376;</th>
+                                    <th>&#32465;&#23450;&#26041;&#24335;</th>
+                                    <th>&#26356;&#26032;&#26102;&#38388;</th>
+                                    <th>&#25805;&#20316;</th>
+                                </tr>
+                            </thead>
+                            <tbody id="boundBindingTableBody">
+                                <tr><td colspan="8" class="text-center text-muted">&#21152;&#36733;&#20013;...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1860,9 +1898,9 @@
             const titleEl = modalEl.querySelector('.modal-title');
             const bodyEl = document.getElementById('contactEngineerBody');
             if (titleEl) {
-                titleEl.innerHTML = '<i class="fas fa-phone-alt me-2"></i>联系工程师';
+                titleEl.innerHTML = '<i class="fas fa-phone-alt me-2"></i>\u8054\u7cfb\u5de5\u7a0b\u5e08';
             }
-            bodyEl.innerHTML = '<div class="text-muted">加载中...</div>';
+            bodyEl.innerHTML = '<div class="text-muted">\u52a0\u8f7d\u4e2d...</div>';
             const modal = new bootstrap.Modal(modalEl);
             modal.show();
 
@@ -1870,14 +1908,14 @@
                 const resp = await fetch(`${API_BASE}/engineer/contact/${recordId}`);
                 const result = await resp.json();
                 if (!result.success) {
-                    bodyEl.innerHTML = showAlert(result.message || '获取联系方式失败', 'danger');
+                    bodyEl.innerHTML = showAlert(result.message || '\u83b7\u53d6\u8054\u7cfb\u65b9\u5f0f\u5931\u8d25', 'danger');
                     return;
                 }
                 const data = result.data || {};
                 if (!data.is_bound) {
                     bodyEl.innerHTML = `
                         <div class="alert alert-warning mb-0">
-                            <strong>${h(data.engineer_name || '未知工程师')}</strong> 尚未关联账号，暂无联系方式。
+                            <strong>${h(data.engineer_name || '\u672a\u77e5\u5de5\u7a0b\u5e08')}</strong> \u5c1a\u672a\u5173\u8054\u8d26\u53f7\uff0c\u6682\u65e0\u8054\u7cfb\u65b9\u5f0f\u3002
                         </div>
                     `;
                     return;
@@ -1885,41 +1923,14 @@
 
                 bodyEl.innerHTML = `
                     <table class="table table-sm">
-                        <tr><th>工程师</th><td>${h(data.engineer_name || '-')}</td></tr>
-                        <tr><th>部门</th><td>${h(data.department || '-')}</td></tr>
-                        <tr><th>手机号</th><td id="maskedPhoneCell">${h(data.phone_masked || '-')}</td></tr>
+                        <tr><th>\u5de5\u7a0b\u5e08</th><td>${h(data.engineer_name || '-')}</td></tr>
+                        <tr><th>\u90e8\u95e8</th><td>${h(data.department || '-')}</td></tr>
+                        <tr><th>\u624b\u673a\u53f7</th><td>${h(data.phone_masked || '-')}</td></tr>
                     </table>
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-sm btn-success" id="callEngineerBtn"><i class="fas fa-phone-alt me-1"></i>一键拨打</button>
-                        <button class="btn btn-sm btn-primary" id="smsEngineerBtn"><i class="fas fa-sms me-1"></i>发送短信</button>
-                    </div>
-                    <p class="text-muted small mt-2 mb-0">默认仅展示脱敏号码，拨打/短信时才请求完整号码。</p>
+                    <p class="text-muted small mt-2 mb-0">\u62e8\u53f7/\u77ed\u4fe1\u529f\u80fd\u5df2\u6682\u65f6\u9690\u85cf\u3002</p>
                 `;
-
-                async function revealPhoneAndJump(action) {
-                    const revealResp = await fetch(`${API_BASE}/engineer/contact/${recordId}?reveal=1`);
-                    const revealData = await revealResp.json();
-                    if (!revealData.success || !revealData.data || !revealData.data.phone) {
-                        alert('获取完整号码失败');
-                        return;
-                    }
-                    const phone = String(revealData.data.phone).trim();
-                    if (!/^1\d{10}$/.test(phone)) {
-                        alert('号码格式无效');
-                        return;
-                    }
-                    document.getElementById('maskedPhoneCell').textContent = revealData.data.phone_masked || '';
-                    if (action === 'call') {
-                        window.location.href = `tel:${phone}`;
-                    } else {
-                        window.location.href = `sms:${phone}`;
-                    }
-                }
-
-                document.getElementById('callEngineerBtn').addEventListener('click', () => revealPhoneAndJump('call'));
-                document.getElementById('smsEngineerBtn').addEventListener('click', () => revealPhoneAndJump('sms'));
             } catch (error) {
-                bodyEl.innerHTML = showAlert(`获取联系方式失败: ${error.message}`, 'danger');
+                bodyEl.innerHTML = showAlert(`\u83b7\u53d6\u8054\u7cfb\u65b9\u5f0f\u5931\u8d25: ${error.message}`, 'danger');
             }
         }
 
@@ -1928,9 +1939,9 @@
             const titleEl = modalEl.querySelector('.modal-title');
             const bodyEl = document.getElementById('contactEngineerBody');
             if (titleEl) {
-                titleEl.innerHTML = '<i class="fas fa-phone-alt me-2"></i>联系上传人';
+                titleEl.innerHTML = '<i class="fas fa-phone-alt me-2"></i>\u8054\u7cfb\u4e0a\u4f20\u4eba';
             }
-            bodyEl.innerHTML = '<div class="text-muted">加载中...</div>';
+            bodyEl.innerHTML = '<div class="text-muted">\u52a0\u8f7d\u4e2d...</div>';
             const modal = new bootstrap.Modal(modalEl);
             modal.show();
 
@@ -1938,14 +1949,14 @@
                 const resp = await fetch(`${API_BASE}/uploader/contact/${fileId}`);
                 const result = await resp.json();
                 if (!result.success) {
-                    bodyEl.innerHTML = showAlert(result.message || '获取联系方式失败', 'danger');
+                    bodyEl.innerHTML = showAlert(result.message || '\u83b7\u53d6\u8054\u7cfb\u65b9\u5f0f\u5931\u8d25', 'danger');
                     return;
                 }
                 const data = result.data || {};
                 if (!data.is_bound) {
                     bodyEl.innerHTML = `
                         <div class="alert alert-warning mb-0">
-                            <strong>${h(data.uploader_name || '未知上传人')}</strong> 尚未关联账号，暂无联系方式。
+                            <strong>${h(data.uploader_name || '\u672a\u77e5\u4e0a\u4f20\u4eba')}</strong> \u5c1a\u672a\u5173\u8054\u8d26\u53f7\uff0c\u6682\u65e0\u8054\u7cfb\u65b9\u5f0f\u3002
                         </div>
                     `;
                     return;
@@ -1953,43 +1964,16 @@
 
                 bodyEl.innerHTML = `
                     <table class="table table-sm">
-                        <tr><th>上传人</th><td>${h(data.uploader_name || '-')}</td></tr>
-                        <tr><th>询价工程师</th><td>${h(data.inquiry_engineer || '-')}</td></tr>
-                        <tr><th>文件名</th><td>${h(data.file_name || '-')}</td></tr>
-                        <tr><th>部门</th><td>${h(data.department || '-')}</td></tr>
-                        <tr><th>手机号</th><td id="maskedUploaderPhoneCell">${h(data.phone_masked || '-')}</td></tr>
+                        <tr><th>\u4e0a\u4f20\u4eba</th><td>${h(data.uploader_name || '-')}</td></tr>
+                        <tr><th>\u8be2\u4ef7\u5de5\u7a0b\u5e08</th><td>${h(data.inquiry_engineer || '-')}</td></tr>
+                        <tr><th>\u6587\u4ef6\u540d</th><td>${h(data.file_name || '-')}</td></tr>
+                        <tr><th>\u90e8\u95e8</th><td>${h(data.department || '-')}</td></tr>
+                        <tr><th>\u624b\u673a\u53f7</th><td>${h(data.phone_masked || '-')}</td></tr>
                     </table>
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-sm btn-success" id="callUploaderBtn"><i class="fas fa-phone-alt me-1"></i>一键拨打</button>
-                        <button class="btn btn-sm btn-primary" id="smsUploaderBtn"><i class="fas fa-sms me-1"></i>发送短信</button>
-                    </div>
-                    <p class="text-muted small mt-2 mb-0">默认仅展示脱敏号码，拨打/短信时才请求完整号码。</p>
+                    <p class="text-muted small mt-2 mb-0">\u62e8\u53f7/\u77ed\u4fe1\u529f\u80fd\u5df2\u6682\u65f6\u9690\u85cf\u3002</p>
                 `;
-
-                async function revealPhoneAndJump(action) {
-                    const revealResp = await fetch(`${API_BASE}/uploader/contact/${fileId}?reveal=1`);
-                    const revealData = await revealResp.json();
-                    if (!revealData.success || !revealData.data || !revealData.data.phone) {
-                        alert('获取完整号码失败');
-                        return;
-                    }
-                    const phone = String(revealData.data.phone).trim();
-                    if (!/^1\d{10}$/.test(phone)) {
-                        alert('号码格式无效');
-                        return;
-                    }
-                    document.getElementById('maskedUploaderPhoneCell').textContent = revealData.data.phone_masked || '';
-                    if (action === 'call') {
-                        window.location.href = `tel:${phone}`;
-                    } else {
-                        window.location.href = `sms:${phone}`;
-                    }
-                }
-
-                document.getElementById('callUploaderBtn').addEventListener('click', () => revealPhoneAndJump('call'));
-                document.getElementById('smsUploaderBtn').addEventListener('click', () => revealPhoneAndJump('sms'));
             } catch (error) {
-                bodyEl.innerHTML = showAlert(`获取联系方式失败: ${error.message}`, 'danger');
+                bodyEl.innerHTML = showAlert(`\u83b7\u53d6\u8054\u7cfb\u65b9\u5f0f\u5931\u8d25: ${error.message}`, 'danger');
             }
         }
 
@@ -2355,49 +2339,93 @@
             new bootstrap.Modal(document.getElementById('userManagementModal')).show();
         }
 
-        async function loadPendingEngineerBindings() {
-            const tbody = document.getElementById('bindingTableBody');
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">加载中...</td></tr>';
+        async function loadEngineerBindings() {
+            const pendingBody = document.getElementById('bindingTableBody');
+            const boundBody = document.getElementById('boundBindingTableBody');
+            pendingBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">\u52a0\u8f7d\u4e2d...</td></tr>';
+            if (boundBody) {
+                boundBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">\u52a0\u8f7d\u4e2d...</td></tr>';
+            }
+
             try {
-                const [pendingResp, usersResp] = await Promise.all([
+                const [pendingResp, usersResp, bindingsResp] = await Promise.all([
                     fetch('/api/admin/engineer-bindings/pending'),
-                    fetch('/api/admin/users')
+                    fetch('/api/admin/users'),
+                    fetch('/api/admin/engineer-bindings')
                 ]);
                 const pendingData = await pendingResp.json();
                 const usersData = await usersResp.json();
+                const bindingsData = await bindingsResp.json();
+
                 if (!pendingData.success || !usersData.success) {
-                    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">${h(pendingData.message || usersData.message || '加载失败')}</td></tr>`;
+                    pendingBody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">${h(pendingData.message || usersData.message || '\u52a0\u8f7d\u5931\u8d25')}</td></tr>`;
+                } else {
+                    const userOptions = usersData.data.map(u => (
+                        `<option value="${Number(u.id)}">${h((u.real_name || u.username || u.phone) + ' / ' + (u.phone || '-'))}</option>`
+                    )).join('');
+
+                    if (!pendingData.data.length) {
+                        pendingBody.innerHTML = '<tr><td colspan="6" class="text-center text-success">\u6682\u65e0\u5f85\u5173\u8054\u6570\u636e</td></tr>';
+                    } else {
+                        pendingBody.innerHTML = pendingData.data.map((row, idx) => `
+                            <tr>
+                                <td>${h(row.engineer_name)}</td>
+                                <td>${h(row.department || '-')}</td>
+                                <td>${h(row.record_count || 0)}</td>
+                                <td>${h(row.latest_quote || '-')}</td>
+                                <td>
+                                    <select class="form-select form-select-sm" id="bindUserSelect_${idx}">
+                                        <option value="">\u8bf7\u9009\u62e9\u7528\u6237</option>
+                                        ${userOptions}
+                                    </select>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary" onclick="bindEngineerName(decodeURIComponent('${encodeURIComponent(String(row.engineer_name || ''))}'), 'bindUserSelect_${idx}')">\u7ed1\u5b9a</button>
+                                </td>
+                            </tr>
+                        `).join('');
+                    }
+                }
+
+                if (!boundBody) {
                     return;
                 }
 
-                const userOptions = usersData.data.map(u => (
-                    `<option value="${Number(u.id)}">${h((u.real_name || u.username || u.phone) + ' / ' + (u.phone || '-'))}</option>`
-                )).join('');
-
-                if (!pendingData.data.length) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-success">暂无待关联数据</td></tr>';
+                if (!bindingsData.success) {
+                    boundBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${h(bindingsData.message || '\u52a0\u8f7d\u5931\u8d25')}</td></tr>`;
                     return;
                 }
 
-                tbody.innerHTML = pendingData.data.map((row, idx) => `
-                    <tr>
-                        <td>${h(row.engineer_name)}</td>
-                        <td>${h(row.department || '-')}</td>
-                        <td>${h(row.record_count || 0)}</td>
-                        <td>${h(row.latest_quote || '-')}</td>
-                        <td>
-                            <select class="form-select form-select-sm" id="bindUserSelect_${idx}">
-                                <option value="">请选择用户</option>
-                                ${userOptions}
-                            </select>
-                        </td>
-                        <td>
-                            <button class="btn btn-sm btn-primary" onclick="bindEngineerName(decodeURIComponent('${encodeURIComponent(String(row.engineer_name || ''))}'), 'bindUserSelect_${idx}')">绑定</button>
-                        </td>
-                    </tr>
-                `).join('');
+                if (!bindingsData.data || !bindingsData.data.length) {
+                    boundBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">\u6682\u65e0\u5df2\u5173\u8054\u6570\u636e</td></tr>';
+                    return;
+                }
+
+                boundBody.innerHTML = bindingsData.data.map((row) => {
+                    const user = row.user || {};
+                    const displayName = user.real_name || user.username || '-';
+                    const bindTypeText = row.bind_type === 'manual' ? '\u624b\u52a8' : '\u81ea\u52a8';
+                    const unbindBtn = Number.isFinite(Number(row.id))
+                        ? `<button class="btn btn-sm btn-outline-danger" onclick="unbindEngineerBinding(${Number(row.id)})">\u53d6\u6d88\u5173\u8054</button>`
+                        : '<button class="btn btn-sm btn-outline-secondary" disabled>\u4e0d\u53ef\u64cd\u4f5c</button>';
+                    return `
+                        <tr>
+                            <td>${h(row.engineer_name_raw || '-')}</td>
+                            <td>${h(row.engineer_name_norm || '-')}</td>
+                            <td>${h(displayName)}</td>
+                            <td>${h(user.phone || '-')}</td>
+                            <td>${h(user.department || '-')}</td>
+                            <td>${h(bindTypeText)}</td>
+                            <td>${h(row.updated_at || '-')}</td>
+                            <td>${unbindBtn}</td>
+                        </tr>
+                    `;
+                }).join('');
             } catch (error) {
-                tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">加载失败: ${h(error.message)}</td></tr>`;
+                pendingBody.innerHTML = `<tr><td colspan="6" class="text-center text-danger">\u52a0\u8f7d\u5931\u8d25: ${h(error.message)}</td></tr>`;
+                if (boundBody) {
+                    boundBody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">\u52a0\u8f7d\u5931\u8d25: ${h(error.message)}</td></tr>`;
+                }
             }
         }
 
@@ -2406,7 +2434,7 @@
                 alert('仅管理员可使用工程师关联管理');
                 return;
             }
-            await loadPendingEngineerBindings();
+            await loadEngineerBindings();
             new bootstrap.Modal(document.getElementById('engineerBindingModal')).show();
         }
 
@@ -2429,13 +2457,39 @@
                     return;
                 }
                 alert(`绑定成功，已更新 ${data.updated_records || 0} 条记录`);
-                await loadPendingEngineerBindings();
+                await loadEngineerBindings();
             } catch (error) {
                 alert('绑定失败: ' + error.message);
             }
         };
 
         // 用户管理
+        
+        window.unbindEngineerBinding = async function(bindingId) {
+            const id = Number(bindingId);
+            if (!Number.isFinite(id) || id <= 0) {
+                alert('\u53c2\u6570\u9519\u8bef');
+                return;
+            }
+            if (!confirm('\u786e\u8ba4\u53d6\u6d88\u8be5\u5de5\u7a0b\u5e08\u5173\u8054\u5417\uff1f\u53d6\u6d88\u540e\u53ef\u91cd\u65b0\u7ed1\u5b9a\u3002')) {
+                return;
+            }
+            try {
+                const resp = await fetch(`/api/admin/engineer-bindings/${id}`, {
+                    method: 'DELETE'
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    alert(data.message || '\u53d6\u6d88\u5173\u8054\u5931\u8d25');
+                    return;
+                }
+                alert(`\u53d6\u6d88\u5173\u8054\u6210\u529f\uff0c\u5df2\u89e3\u9664 ${data.updated_records || 0} \u6761\u8bb0\u5f55\u7684\u7ed1\u5b9a`);
+                await loadEngineerBindings();
+            } catch (error) {
+                alert('\u53d6\u6d88\u5173\u8054\u5931\u8d25: ' + error.message);
+            }
+        };
+
         document.getElementById('showUserManagement').addEventListener('click', (e) => {
             e.preventDefault();
             openUserManagement();
@@ -2451,7 +2505,7 @@
             openEngineerBindingManagement();
         });
         document.getElementById('refreshBindingBtn').addEventListener('click', () => {
-            loadPendingEngineerBindings();
+            loadEngineerBindings();
         });
 
         async function loadUsers() {
@@ -2479,10 +2533,12 @@
                     <td>${h(user.department || '-')}</td>
                     <td><span class="badge ${user.role === 'admin' ? 'bg-danger' : 'bg-primary'}">${user.role === 'admin' ? '管理员' : '普通用户'}</span></td>
                     <td><span class="badge ${user.is_active ? 'bg-success' : 'bg-secondary'}">${user.is_active ? '启用' : '禁用'}</span></td>
-                    <td>
-                        <button class="btn btn-sm btn-outline-primary me-1" onclick="editUser(${Number(user.id)})">编辑</button>
-                        <button class="btn btn-sm btn-outline-warning me-1" onclick="resetPassword(${Number(user.id)})">重置密码</button>
-                        ${user.id !== currentUser.id ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${Number(user.id)})">删除</button>` : ''}
+                    <td class="user-op-cell">
+                        <div class="user-op-actions">
+                            <button class="btn btn-sm btn-outline-primary" onclick="editUser(${Number(user.id)})">编辑</button>
+                            <button class="btn btn-sm btn-outline-warning" onclick="resetPassword(${Number(user.id)})">重置密码</button>
+                            ${user.id !== currentUser.id ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${Number(user.id)})">删除</button>` : ''}
+                        </div>
                     </td>
                 </tr>
             `).join('');
@@ -2614,6 +2670,7 @@
     </script>
 </body>
 </html>
+
 
 
 

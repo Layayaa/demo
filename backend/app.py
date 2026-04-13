@@ -1582,8 +1582,8 @@ def natural_language_query():
                 parsed_params['context_inherited'] = True
                 print(f"[自然语言查询] uploader_lookup 使用上下文承接: files={len(context_file_ids)}", flush=True)
 
-        # ??????????????????????????/????
-        # ??????????????????????????/????
+        # 工程师追问承接：如“这份资料是谁负责的”自动继承上一轮查询条件/文件范围
+        # 仅在缺少筛选条件时承接，避免覆盖用户新输入
         if parsed_params.get('parsed_intent') == 'engineer_lookup':
             is_followup = is_followup_reference_query(query_text, lookup_subject) or is_engineer_followup_query(query_text)
             missing_filters = not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region'))
@@ -2838,6 +2838,38 @@ def admin_bind_engineer_to_user():
         return api_internal_error('admin_bind_engineer_to_user', e)
 
 
+@app.route('/api/admin/engineer-bindings/<int:binding_id>', methods=['DELETE'])
+@admin_required
+def admin_unbind_engineer_binding(binding_id):
+    """管理员取消工程师名称与用户账号的关联"""
+    try:
+        binding = EngineerBinding.query.get(binding_id)
+        if not binding:
+            return jsonify({'success': False, 'message': '关联记录不存在'}), 404
+
+        norm_name = binding.engineer_name_norm
+        bound_user_id = binding.user_id
+
+        updated = 0
+        records = PriceRecord.query.filter_by(engineer_user_id=bound_user_id).all()
+        for record in records:
+            if normalize_engineer_key(record.engineer_name) == norm_name:
+                record.engineer_user_id = None
+                updated += 1
+
+        db.session.delete(binding)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': '已取消关联',
+            'updated_records': updated
+        })
+    except Exception as e:
+        db.session.rollback()
+        return api_internal_error('admin_unbind_engineer_binding', e)
+
+
 def init_db():
     """初始化数据库 - 创建所有数据库表"""
     with app.app_context():
@@ -2989,6 +3021,8 @@ if __name__ == '__main__':
     print(f"访问地址: http://localhost:{port}")
     print("=" * 60)
     app.run(debug=False, host='0.0.0.0', port=port)
+
+
 
 
 
