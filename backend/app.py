@@ -2588,8 +2588,6 @@ def natural_language_query():
         end = start + per_page
         page_data = results[start:end] if start < total else []
 
-        # 自然语言价格列表结果按当前页累计引用次数
-        increment_reference_count_for_records([item.get('record_id') for item in page_data])
 
         return jsonify({
             'success': True,
@@ -2763,8 +2761,6 @@ def query_records():
                 result['source_engineer'] = source_file.engineer_name
             results.append(result)
 
-        # 当前页结果视为一次引用
-        increment_reference_count_for_records([item.record_id for item in pagination.items])
 
         return jsonify({
             'success': True,
@@ -3762,6 +3758,7 @@ if __name__ == '__main__':
     print(f"访问地址: http://localhost:{port}")
     print("=" * 60)
     app.run(debug=False, host='0.0.0.0', port=port)
+
 
 
 
