@@ -101,13 +101,13 @@ class PriceRecord(db.Model):
     valid_until = db.Column(db.Date, comment='有效期至')
 
     # 基础价格字段
-    project_name = db.Column(db.String(255), comment='项目名称')
-    material_name = db.Column(db.String(255), nullable=False, comment='材料名称')
-    specification = db.Column(db.String(255), comment='规格型号')
+    project_name = db.Column(db.String(500), comment='项目名称')
+    material_name = db.Column(db.String(500), nullable=False, comment='材料名称')
+    specification = db.Column(db.String(500), comment='规格型号')
     unit = db.Column(db.String(50), comment='单位')
     price = db.Column(db.Float, comment='单价')
     is_tax_included = db.Column(db.String(10), comment='是否含税')
-    supplier = db.Column(db.String(255), comment='供应商/来源')
+    supplier = db.Column(db.String(500), comment='供应商/来源')
     region = db.Column(db.String(100), comment='地区')
     quote_date = db.Column(db.Date, comment='报价时间')
     remark = db.Column(db.Text, comment='备注')

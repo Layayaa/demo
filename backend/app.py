@@ -3805,8 +3805,34 @@ def ensure_schema_compatibility():
         if user_engine:
             EngineerBinding.__table__.create(bind=user_engine, checkfirst=True)
 
-        # 核心索引优化（材料、地区、时间、组合索引）
+        # MySQL 字段长度兼容修复（避免旧库 specification/material_name 等字段过短导致上传 500）
         price_engine = db.engines.get('price_record')
+        if price_engine and price_engine.url.get_backend_name() == 'mysql':
+            target_columns = {
+                'project_name': (500, True),
+                'material_name': (500, False),
+                'specification': (500, True),
+                'supplier': (500, True),
+            }
+            with price_engine.begin() as conn:
+                mysql_columns = {
+                    row[0]: (row[1] or '').lower()
+                    for row in conn.exec_driver_sql(
+                        "SELECT COLUMN_NAME, COLUMN_TYPE "
+                        "FROM INFORMATION_SCHEMA.COLUMNS "
+                        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'price_record'"
+                    ).fetchall()
+                }
+                for col_name, (target_len, nullable) in target_columns.items():
+                    col_type = mysql_columns.get(col_name, '')
+                    match = re.search(r'varchar\((\d+)\)', col_type)
+                    if match and int(match.group(1)) < target_len:
+                        null_clause = "NULL" if nullable else "NOT NULL"
+                        conn.exec_driver_sql(
+                            f"ALTER TABLE price_record MODIFY COLUMN {col_name} VARCHAR({target_len}) {null_clause}"
+                        )
+
+        # 核心索引优化（材料、地区、时间、组合索引）
         if price_engine:
             backend = price_engine.url.get_backend_name()
             statements = [
