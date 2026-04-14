@@ -277,8 +277,8 @@ def extract_entities(query_text: str, parsed_params: dict):
     normalized_query_text = compact or normalize_text(query_text)
 
     strict_phrase = material_name if len(material_name) >= 4 else ''
-    material_keywords = split_keywords(material_name or query_text)
-    if not material_keywords:
+    material_keywords = split_keywords(material_name) if material_name else []
+    if not material_keywords and not material_name and not (parsed_params.get('region') or parsed_params.get('specification')):
         material_keywords = split_keywords(query_text)
 
     uploader_candidates = _extract_uploader_candidates(query_text, compact_text=normalized_query_text)

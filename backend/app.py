@@ -303,6 +303,138 @@ def _compact_text(value):
     return text
 
 
+_REGION_ALIAS_SUFFIXES = ('省', '市', '区', '县', '自治州', '新区', '地区', '州', '盟')
+
+
+def _append_region_candidate(bucket, raw_value):
+    text = (raw_value or '').strip()
+    if not text:
+        return
+    text = re.sub(r'\s+', '', text)
+    if len(text) >= 2:
+        bucket.add(text)
+
+    for token in re.split(r'[，,、/;；|]+', text):
+        token = token.strip()
+        if len(token) < 2:
+            continue
+        bucket.add(token)
+        for suffix in _REGION_ALIAS_SUFFIXES:
+            if token.endswith(suffix):
+                alias = token[:-len(suffix)]
+                if len(alias) >= 2:
+                    bucket.add(alias)
+
+
+def build_compact_region_candidates():
+    """构建可用于连写词纠偏的地区候选词（优先覆盖真实库内数据）。"""
+    candidates = set()
+
+    parser = globals().get('nlp_parser')
+    if parser is not None:
+        for region in (getattr(parser, 'region_keywords', None) or []):
+            _append_region_candidate(candidates, region)
+
+    try:
+        rows = db.session.query(PriceRecord.region).filter(
+            PriceRecord.region != None,
+            PriceRecord.region != ''
+        ).distinct().limit(3000).all()
+    except Exception:
+        rows = []
+
+    for row in rows:
+        _append_region_candidate(candidates, row[0] if row else '')
+
+    return sorted(candidates, key=lambda item: (-len(item), item))
+
+
+def infer_region_from_compact_text(text, region_candidates=None):
+    compact = _compact_text(text)
+    if not compact:
+        return ''
+
+    candidates = region_candidates if region_candidates is not None else build_compact_region_candidates()
+    for candidate in candidates:
+        if candidate and candidate in compact:
+            return candidate
+    return ''
+
+
+def sync_query_entities_after_compact_fix(parsed_params):
+    entities = parsed_params.get('entities')
+    if not isinstance(entities, dict):
+        return
+
+    material_name = (parsed_params.get('material_name') or '').strip()
+    region = (parsed_params.get('region') or '').strip()
+    specification = (parsed_params.get('specification') or '').strip()
+    compact_material = _compact_text(material_name)
+
+    entities['region'] = region
+    entities['specification'] = specification
+    entities['strict_material_phrase'] = material_name if len(compact_material) >= 4 else ''
+    entities['material_keywords'] = [compact_material] if len(compact_material) >= 2 else []
+
+
+def normalize_compact_material_region(parsed_params, query_text):
+    """修正连写查询（如“门成都”）导致的材料/地区识别偏差。"""
+    if not isinstance(parsed_params, dict):
+        return parsed_params
+
+    material_name = (parsed_params.get('material_name') or '').strip()
+    region = (parsed_params.get('region') or '').strip()
+    compact_material = _compact_text(material_name)
+    compact_region = _compact_text(region)
+    compact_query = _compact_text(query_text)
+    changed = False
+
+    # 1) 已识别到地区，但材料中混入了地区词（如 material=门成都, region=成都）。
+    if compact_material and compact_region and compact_region in compact_material:
+        residual = compact_material.replace(compact_region, '', 1).strip()
+        if residual != compact_material:
+            parsed_params['material_name'] = residual
+            compact_material = residual
+            changed = True
+
+    # 2) 未识别到地区时，尝试从连写文本中反推地区，再从材料里剥离。
+    if not compact_region:
+        source_text = compact_material or compact_query
+        inferred_region = infer_region_from_compact_text(source_text)
+        if inferred_region:
+            parsed_params['region'] = inferred_region
+            compact_region = _compact_text(inferred_region)
+            changed = True
+            if compact_material and compact_region in compact_material:
+                residual = compact_material.replace(compact_region, '', 1).strip()
+                if residual != compact_material:
+                    parsed_params['material_name'] = residual
+                    compact_material = residual
+
+    # 3) 材料与地区完全一致时，按“地区查询”处理，避免材料误过滤。
+    if compact_region and compact_material and compact_material == compact_region:
+        parsed_params['material_name'] = ''
+        compact_material = ''
+        changed = True
+
+    if changed:
+        fixed_material = (parsed_params.get('material_name') or '').strip()
+        fixed_synonyms = []
+        if fixed_material:
+            fixed_synonyms.append(fixed_material)
+            for item in (parsed_params.get('material_synonyms') or []):
+                token = (item or '').strip()
+                if token and token not in fixed_synonyms:
+                    fixed_synonyms.append(token)
+        parsed_params['material_synonyms'] = fixed_synonyms
+        sync_query_entities_after_compact_fix(parsed_params)
+        print(
+            f"[natural_query] compact fix applied: material={parsed_params.get('material_name')}, region={parsed_params.get('region')}",
+            flush=True
+        )
+
+    return parsed_params
+
 def is_followup_reference_query(query_text, lookup_subject):
     """判断是否是“这份/这个/上面”这类承接上一轮的追问。"""
     compact_query = _compact_text(query_text)
@@ -1734,6 +1866,7 @@ def natural_language_query():
         # 解析自然语言查询（规则优化版）
         parsed_params = parse_natural_language_query(query_text)
         parsed_params = enrich_parsed_params(query_text, parsed_params)
+        parsed_params = normalize_compact_material_region(parsed_params, query_text)
 
         # 调试输出
         print(f"[自然语言查询] 输入: {query_text}", flush=True)
@@ -3192,6 +3325,7 @@ def engineer_lookup_query():
         max_scan = min(max(max_scan, 50), 2000)
 
         parsed_params = enrich_parsed_params(query_text, parse_natural_language_query(query_text))
+        parsed_params = normalize_compact_material_region(parsed_params, query_text)
         parsed_params['parsed_intent'] = 'engineer_lookup'
         if not (parsed_params.get('material_name') or parsed_params.get('specification') or parsed_params.get('region')):
             return jsonify({'success': False, 'message': '请补充材料名称或规格后再查询负责人'}), 400
@@ -3758,46 +3892,4 @@ if __name__ == '__main__':
     print(f"访问地址: http://localhost:{port}")
     print("=" * 60)
     app.run(debug=False, host='0.0.0.0', port=port)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
